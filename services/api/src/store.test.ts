@@ -115,3 +115,17 @@ describe("draft statistics", () => {
     expect(s.draftStats({}, 61).matchups).toEqual([]);          // the busiest pair has 60 games
   });
 });
+
+describe("averages", () => {
+  it("averages comparable games: same champion, role and rank bracket", () => {
+    const a = seededStore().averages({ role: "TOP", champion: "Ahri", bracket: "EMERALD" });
+    expect(a.games).toBe(40); expect(a.kda).toBeCloseTo(1.5, 6); expect(a.cs).toBeCloseTo(110 / 30, 6); expect(a.damage).toBeCloseTo(10000 / 30, 6); expect(a.gold).toBeCloseTo(300, 6);
+  });
+  it("widens by dropping the champion or the bracket", () => {
+    const s = seededStore();
+    expect(s.averages({ role: "TOP" }).games).toBe(80); // Ahri and Lux both play top in the fixtures
+    expect(s.averages({ role: "TOP", champion: "Ahri", bracket: "DIAMOND" }).games).toBe(0);
+  });
+  it("returns zeros, not NaN, when nothing matches", () => expect(seededStore().averages({ role: "TOP", champion: "Nobody" })).toEqual({ games: 0, kda: 0, cs: 0, damage: 0, gold: 0 }));
+});
+

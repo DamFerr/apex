@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { useUi } from "../lib/store";
 import { shrink, wilson, sampleBadge } from "@apex/stats-core";
 import { Skeleton, StatCard, ProgressRing } from "../components/ui";
@@ -30,7 +31,8 @@ export function Home() {
         <StatCard label="KDA · CS/min" value={kda} decimals={2} hint={`${csm.toFixed(1)} CS per minute`} />
       </> : games.data ? <div className="glass rounded-lg p-5 text-sm text-muted col-span-2">No recent games found.</div> : <><Skeleton className="h-28" /><Skeleton className="h-28" /></>}
     </div>
-    <h2 className="font-display text-lg font-semibold mt-8 mb-3">Recent games</h2>
+    <div className="flex items-baseline justify-between mt-8 mb-3"><h2 className="font-display text-lg font-semibold">Recent games</h2>
+      <Link to="/recap" className="focus-ring text-sm text-accent hover:underline rounded">Last game recap →</Link></div>
     <motion.ul className="space-y-2" initial="h" animate="s" variants={{ s: { transition: { staggerChildren: 0.04 } } }}>
       {games.isError && <li className="text-sm text-bad">{(games.error as Error).message}</li>}
       {games.isLoading && [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}

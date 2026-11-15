@@ -12,8 +12,10 @@ export interface RiotParticipant { puuid: string; riotIdGameName?: string; summo
   summoner1Id?: number; summoner2Id?: number; perks?: { styles: { selections: { perk: number }[] }[] } }
 export interface RiotMatch { metadata: { matchId: string }; info: { gameDuration: number; gameCreation: number; gameEndTimestamp?: number; queueId: number; gameVersion?: string; participants: RiotParticipant[];
   teams?: { teamId: number; bans: { championId: number }[] }[] } }
-export interface LeagueEntry { queueType: string; tier: string; rank: string; leaguePoints: number; wins: number; losses: number }
+export interface LeagueEntry { queueType: string; tier: string; rank: string; leaguePoints: number; wins: number; losses: number; hotStreak?: boolean }
 export interface LadderEntry { puuid?: string; tier: string; rank: string; leaguePoints: number }
+export interface ActiveParticipant { puuid?: string; riotId?: string; teamId: number; championId: number; spell1Id?: number; spell2Id?: number; bot?: boolean }
+export interface RiotActiveGame { gameId: number; gameMode: string; gameType?: string; gameLength: number; gameQueueConfigId?: number; participants: ActiveParticipant[]; bannedChampions?: { championId: number; teamId: number }[] }
 export interface RiotMastery { championId: number; championLevel: number; championPoints: number }
 
 /** Only what Apex needs. A fake implements this in tests. */
@@ -26,6 +28,8 @@ export interface RiotApi {
   match(id: string, region: string, low?: boolean): Promise<RiotMatch>;
   ladder(platform: string, tier: string, division: string, page: number, low?: boolean): Promise<LadderEntry[]>;
   mastery(puuid: string, platform: string, count: number): Promise<RiotMastery[]>;
+  /** Spectator-v5. Throws HttpError 404 when the player is not in a game. */
+  activeGame(puuid: string, platform: string): Promise<RiotActiveGame>;
 }
 
 export class HttpRiot implements RiotApi {
@@ -56,4 +60,5 @@ export class HttpRiot implements RiotApi {
   match = (id: string, r: string, low = false) => this.get<RiotMatch>(r, `/lol/match/v5/matches/${id}`, low);
   ladder = (pf: string, tier: string, division: string, page: number, low = false) => this.get<LadderEntry[]>(pf, `/lol/league-exp/v4/entries/RANKED_SOLO_5x5/${tier}/${division}?page=${page}`, low);
   mastery = (p: string, pf: string, c: number) => this.get<RiotMastery[]>(pf, `/lol/champion-mastery/v4/champion-masteries/by-puuid/${p}/top?count=${c}`);
+  activeGame = (p: string, pf: string) => this.get<RiotActiveGame>(pf, `/lol/spectator/v5/active-games/by-summoner/${p}`);
 }

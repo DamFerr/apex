@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { HashRouter, Route, Routes } from "react-router-dom";
 import { useUi } from "../lib/store";
 import { ComingSoon } from "./pages";
-import { Champions, ChampionPage, Draft, Profile, Settings } from "./lazyPages";
+import { Champions, ChampionPage, Draft, Profile, Settings, TierList, LiveGame, Recap } from "./lazyPages";
 import { Home } from "./Home";
 import { startMockLcu, startTauriLcu } from "../lib/lcu";
 import { isTauri } from "../lib/tauri";
@@ -42,6 +42,9 @@ export default function App() {
               <Route path="profile/:riotId?" element={<Profile />} />
               <Route path="champions" element={<Champions />} />
               <Route path="champions/:id" element={<ChampionPage />} />
+              <Route path="tierlist" element={<TierList />} />
+              <Route path="live/:riotId?" element={<LiveGame />} />
+              <Route path="recap/:riotId?/:matchId?" element={<Recap />} />
               <Route path="draft" element={<Draft />} />
               <Route path="settings" element={<Settings />} />
               <Route path="*" element={<ComingSoon />} />

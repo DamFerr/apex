@@ -7,13 +7,13 @@ can replace it by changing one line in `apps/desktop/src/lib/api/index.ts`. No A
 ## Run
 ```
 pnpm install
-pnpm test                 # stats-core (10) + draft-engine (15) + lcu-core (23)
+pnpm test                 # stats-core (25) + draft-engine (25) + lcu-core (23)
 pnpm dev                  # UI in the browser, http://localhost:1420
 pnpm lcu-mock             # fake League client (second terminal), then open Draft
 pnpm tauri dev            # native window (first run compiles Rust)
 pnpm build                # type-check + production web build
 pnpm --filter desktop exec playwright install chromium   # once
-pnpm --filter desktop test:e2e                            # 29 end-to-end tests (starts the app and mock client itself)
+pnpm --filter desktop test:e2e                            # 37 end-to-end tests (starts the app and mock client itself)
 ```
 Prerequisites: Node 20+, pnpm, Rust (MSVC), Visual Studio C++ Build Tools, WebView2.
 
@@ -33,6 +33,9 @@ Tests: unit tests for the maths and logic (`pnpm test`) and end-to-end browser t
 | Home, Profile + match detail, Champions + champion page, Draft, Settings | Built (mock data) |
 | Mock LCU, real LCU connector (Rust) | Built; real connector needs testing on your machine |
 | Overlay window (transparent, on top, click-through) | Groundwork; placeholder content |
+| Tier List (per-role grades S+ to D, Bayesian-adjusted, low-data champions ungraded) | Built (mock and collected data) |
+| Live Game scouting (Spectator-v5: all 10 players, rank, season record, champion win rate, bans, 30 s refresh) | Built (mock and real; real needs a Riot key and a game in progress) |
+| Post-game recap (latest or chosen game vs collected rank averages, your own games and the lobby; grade S-D) | Built (mock and real; real baseline needs enough collected games) |
 | Real rune import (placeholder runes by champion class) | Built; needs testing on your machine |
 | Summoner spell import (placeholder by role) | Built; needs testing on your machine |
 | Item set import | Deferred to Phase 2 (needs real build data) |

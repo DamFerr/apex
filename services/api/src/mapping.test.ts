@@ -34,3 +34,38 @@ describe("mapping", () => {
     expect(toMastery([{ championId: 103, championLevel: 7, championPoints: 5 }, { championId: 1, championLevel: 1, championPoints: 1 }], champs)).toEqual([{ champion: "Ahri", name: "Ahri", level: 7, points: 5 }]);
   });
 });
+
+import { toLiveGame, toRecap, perGame } from "./mapping";
+import { HttpError } from "./riot";
+describe("toLiveGame", () => {
+  const champs = new Map([[103, { id: "Ahri", name: "Ahri" }]]);
+  const base = { gameId: 1, gameMode: "CLASSIC", gameLength: -5, participants: [
+    { puuid: "me", riotId: "Me#EUW", teamId: 100, championId: 103, spell1Id: 11, spell2Id: 4 },
+    { riotId: "", teamId: 200, championId: 9999, bot: true }] };
+  it("handles bots, unknown champions, missing ranks and a negative game length", () => {
+    const g = toLiveGame(base, { youPuuid: "me", champs, entries: new Map(), pop: new Map() });
+    expect(g.lengthSec).toBe(0); expect(g.queue).toBe("CLASSIC");
+    expect(g.players[0]).toMatchObject({ champion: "Ahri", isYou: true, jungle: true, rank: null, champGames: 0 });
+    expect(g.players[1]).toMatchObject({ riotId: "Bot", championName: "Champion 9999", team: "red", isYou: false, jungle: false });
+  });
+  it("uses the queue name when the queue id is known", () => {
+    expect(toLiveGame({ ...base, gameQueueConfigId: 450 }, { youPuuid: "x", champs, entries: new Map(), pop: new Map() }).queue).toBe("ARAM");
+  });
+});
+
+describe("toRecap", () => {
+  const m = matchFixture("EUW1_1"), names = new Map([["Ahri", "Ahri"]]);
+  it("throws a 404 when the player was not in the match", () => {
+    expect(() => toRecap(m, "nobody", { names, baseline: null, personal: [] })).toThrow(HttpError);
+  });
+  it("hides the personal comparison below 3 games and shows the mean from 3", () => {
+    const g = (kda: number) => ({ kda, cs: 5, damage: 400, gold: 350 });
+    expect(toRecap(m, "p0", { names, baseline: null, personal: [g(1), g(2)] }).personal).toBeNull();
+    const r = toRecap(m, "p0", { names, baseline: null, personal: [g(1), g(2), g(6)] });
+    expect(r.personal).toEqual({ games: 3 }); expect(r.metrics[0].vsYou).toBeCloseTo(3, 6);
+  });
+  it("computes per-minute numbers and guards against zero deaths", () => {
+    const p = participant(0, { kills: 4, assists: 6, deaths: 0, totalMinionsKilled: 200, neutralMinionsKilled: 10, totalDamageDealtToChampions: 21000, goldEarned: 15000 });
+    expect(perGame(p, 1800)).toEqual({ kda: 10, cs: 7, damage: 700, gold: 500 });
+  });
+});

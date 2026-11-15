@@ -42,6 +42,32 @@ export interface FilterOption { id: string; matches: number }
 /** What the collected data actually contains, so the UI only offers filters that have data. */
 export interface FilterOptions { platforms: FilterOption[]; ranks: FilterOption[]; patches: FilterOption[] }
 
+/** Post-game recap: one finished game compared with collected averages, the player's own recent games, and the lobby. */
+export interface RecapMetric {
+  id: "kda" | "cs" | "damage" | "gold"; label: string; unit: string; you: number;
+  /** Average of comparable collected games (same champion and role, ideally same rank). null = not enough data. */ vsRank: number | null;
+  /** Average of the player's own other recent games in this role. null = fewer than 3. */ vsYou: number | null;
+  /** 1 = best of the ten players in this game. */ lobbyRank: number;
+}
+export interface PostGameRecap {
+  matchId: string; queue: string; win: boolean; durationSec: number; playedAt: string;
+  champion: string; championName: string; role: Role | null; kills: number; deaths: number; assists: number;
+  killParticipation: number; damageShare: number; metrics: RecapMetric[];
+  baseline: { label: string; games: number } | null; personal: { games: number } | null;
+}
+
+/** Live game scouting (Spectator-v5). Only what the game's own loading screen already shows, plus public rank data. */
+export interface LivePlayer {
+  riotId: string; champion: string; championName: string; team: "blue" | "red"; rank: RankInfo | null;
+  /** Riot's "hot streak" flag on the Ranked Solo entry (won several in a row). */ hotStreak: boolean;
+  /** Carries Smite, so almost certainly the jungler. Spectator data has no role field; Apex does not guess the other roles. */ jungle: boolean;
+  isYou: boolean;
+  /** Collected games on this champion (current patch, all roles), for a population win rate next to the player. 0 = no data. */ champGames: number; champWins: number;
+}
+export interface LiveBan { champion: string; championName: string; team: "blue" | "red" }
+export interface LiveGame { inGame: true; queue: string; mode: string; lengthSec: number; bans: LiveBan[]; players: LivePlayer[] }
+export type LiveResult = LiveGame | { inGame: false };
+
 /** Every screen talks to this interface only. Mock now, HTTP backend later. */
 export interface ApexApi {
   getSummoner(riotId: string): Promise<Summoner>;
@@ -57,4 +83,8 @@ export interface ApexApi {
   getFilterOptions(): Promise<FilterOptions>;
   /** null when there is no collected data (mock source). */
   getDraftStats(filter?: StatsFilter): Promise<DraftStats | null>;
+  /** One finished game (the latest when matchId is omitted) compared with averages. */
+  getRecap(riotId: string, matchId?: string): Promise<PostGameRecap>;
+  /** Is this player in a game right now? If so, all ten players. */
+  getLiveGame(riotId: string): Promise<LiveResult>;
 }

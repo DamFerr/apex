@@ -1,12 +1,12 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
-import type { ChampionDetail, ChampionList, FilterOptions, PoolEntry, ChampionSummary, MatchPage, Role, StatLine, Summoner } from "@apex/schema";
+import type { ChampionDetail, ChampionList, FilterOptions, LiveResult, PostGameRecap, PoolEntry, ChampionSummary, MatchPage, Role, StatLine, Summoner } from "@apex/schema";
 import type { Cache } from "./db";
 import type { DD } from "./ddragon";
 import type { Collector } from "./collector";
 import type { Store } from "./store";
-import { toMastery, toMatchDetail, toMatchSummary, toSummoner } from "./mapping";
-import { HttpError, PLATFORM_IDS, regionOf, type RiotApi, type RiotMatch } from "./riot";
+import { toLiveGame, toRecap, toMastery, toMatchDetail, toMatchSummary, toSummoner, perGame, roleOf, type PerGame } from "./mapping";
+import { HttpError, PLATFORM_IDS, regionOf, type LeagueEntry, type RiotActiveGame, type RiotApi, type RiotMatch } from "./riot";
 import { TIERS } from "./collector";
 import type { Filter } from "./store";
 
@@ -167,6 +167,60 @@ export async function buildApp(deps: Deps) {
       const e = pool.get(m.champion) ?? { champion: m.champion, games: 0, wins: 0, points: 0 }; e.points = m.points; pool.set(m.champion, e);
     }
     return [...pool.values()].sort((x, y) => y.games - x.games || y.points - x.points);
+  });
+
+
+
+  // ---- Post-game recap: one finished game vs collected averages, your own recent games, and the lobby ----
+  const MIN_BASELINE = 30; // fewer collected games than this is too noisy to compare against
+  const tierLabel = (t: string) => t[0] + t.slice(1).toLowerCase(), roleLabel = (r: string) => (r === "ADC" ? "ADC" : r[0] + r.slice(1).toLowerCase());
+  app.get<{ Params: { riotId: string }; Querystring: { matchId?: string } }>("/v1/players/:riotId/recap", async (req): Promise<PostGameRecap> => {
+    const acct = await identity(req.params.riotId), platform = await homePlatform(acct.puuid), region = regionOf(platform);
+    const ids = await cached<string[]>(`ids:${acct.puuid}:0:20`, 2 * MIN, () => riot.matchIds(acct.puuid, region, 0, 20));
+    const matchId = req.query.matchId ?? ids[0];
+    if (!matchId) throw new HttpError(404, "No games found for this player");
+    if (!PLATFORM_IDS.includes(matchId.split("_")[0]?.toLowerCase() ?? "")) throw new HttpError(400, "Unknown match id");
+    const match = await matchOf(matchId, regionOf(matchId.split("_")[0]!.toLowerCase())), me = match.info.participants.find((p) => p.puuid === acct.puuid);
+    if (!me) throw new HttpError(404, "This player was not in that match");
+    const data = await dd(), names = new Map([...data.champs.values()].map((c) => [c.id, c.name])), role = roleOf(me.teamPosition);
+    // Baseline: the most specific group of collected Ranked Solo games with enough data (same champion + role + rank, then looser).
+    let baseline: { label: string; avg: PerGame; games: number } | null = null;
+    if (role) {
+      const tier = (await cached(`league:${platform}:${acct.puuid}`, 10 * MIN, () => riot.league(acct.puuid, platform)).catch(() => [])).find((e) => e.queueType === "RANKED_SOLO_5x5")?.tier;
+      const champ = names.get(me.championName) ?? me.championName;
+      const tries = [...(tier ? [{ champion: me.championName, bracket: tier, label: `${tierLabel(tier)} ${champ} ${roleLabel(role)}` }] : []), { champion: me.championName, bracket: undefined, label: `${champ} ${roleLabel(role)}, all ranks` },
+        ...(tier ? [{ champion: undefined, bracket: tier, label: `${tierLabel(tier)} ${roleLabel(role)}` }] : []), { champion: undefined, bracket: undefined, label: `${roleLabel(role)}, all ranks` }];
+      for (const t of tries) {
+        const a = store.averages({ role, champion: t.champion, bracket: t.bracket });
+        if (a.games >= MIN_BASELINE) { baseline = { label: `${t.label} (Ranked Solo)`, avg: a, games: a.games }; break; }
+      }
+    }
+    // Your other recent games in the same role (cached matches are free; the first lookup may fetch a few).
+    const others = ids.filter((id) => id !== matchId).slice(0, 10), personal: PerGame[] = [];
+    for (const id of others) {
+      const m = await matchOf(id, region).catch(() => null), p = m?.info.participants.find((x) => x.puuid === acct.puuid);
+      if (m && p && roleOf(p.teamPosition) === role && role) personal.push(perGame(p, m.info.gameDuration));
+    }
+    return toRecap(match, acct.puuid, { names, baseline, personal });
+  });
+
+  // ---- Live game scouting (Spectator-v5). Uses only what the loading screen shows, plus public rank data. ----
+  app.get<{ Params: { riotId: string } }>("/v1/live/:riotId", async (req): Promise<LiveResult> => {
+    const acct = await identity(req.params.riotId), platform = await homePlatform(acct.puuid);
+    // 45 s cache: the same lookup (and the app's 30 s refresh) never spends more than one Spectator call, and the ten rank lookups are reused.
+    return cached<LiveResult>(`live:${platform}:${acct.puuid}`, 45_000, async () => {
+      let game: RiotActiveGame;
+      try { game = await riot.activeGame(acct.puuid, platform); }
+      catch (e) { if (e instanceof HttpError && e.status === 404) return { inGame: false }; throw e; }
+      const data = await dd(), entries = new Map<string, LeagueEntry[]>();
+      // A failed rank lookup for one player must not break the whole screen: that player just shows no rank.
+      await Promise.all(game.participants.flatMap((p) => (p.puuid && !p.bot ? [p.puuid] : [])).map(async (puuid) => {
+        entries.set(puuid, await cached(`league:${platform}:${puuid}`, 10 * MIN, () => riot.league(puuid, platform)).catch(() => []));
+      }));
+      const pop = new Map<string, { games: number; wins: number }>();
+      for (const r of store.championRows({ patch: store.latestPatch() })) { const e = pop.get(r.champion) ?? { games: 0, wins: 0 }; e.games += r.games; e.wins += r.wins; pop.set(r.champion, e); }
+      return toLiveGame(game, { youPuuid: acct.puuid, champs: data.champs, entries, pop });
+    });
   });
 
   // ---- Collector control (POSTs need a custom header, so other websites cannot trigger them from your browser) ----

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { collectErrors, expectContentVisible, fakeDataDragon } from "./helpers";
 
-const ROUTES = ["/", "/draft", "/champions", "/tierlist", "/profile", "/live", "/analysis", "/pro", "/settings"];
+const ROUTES = ["/", "/draft", "/champions", "/tierlist", "/profile", "/live", "/recap", "/analysis", "/pro", "/settings"];
 
 test.beforeEach(async ({ page }) => { await fakeDataDragon(page); });
 
@@ -24,8 +24,8 @@ test("rapid page switching never leaves a blank page (regression)", async ({ pag
 
 test("switching between 'coming soon' pages keeps hooks stable (regression)", async ({ page }) => {
   const errors = collectErrors(page);
-  await page.goto("/#/tierlist");
-  for (const r of ["/live", "/pro", "/analysis", "/tierlist"]) { await page.evaluate((h) => (location.hash = h), r); await expectContentVisible(page); }
+  await page.goto("/#/pro");
+  for (const r of ["/analysis", "/pro", "/analysis"]) { await page.evaluate((h) => (location.hash = h), r); await expectContentVisible(page); }
   expect(errors).toEqual([]);
 });
 

@@ -1,6 +1,6 @@
 import { guessRoles as rolesFor } from "@apex/draft-engine";
 import { fetchDdChampions } from "../ddragon";
-import type { ApexApi, ChampionDetail, ChampionSummary, MatchDetail, MatchSummary, Participant, Role, Summoner } from "@apex/schema";
+import type { ApexApi, PostGameRecap, LiveGame, LivePlayer, ChampionDetail, ChampionSummary, MatchDetail, MatchSummary, Participant, Role, Summoner } from "@apex/schema";
 
 const delay = <T,>(v: T, ms = 350) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 export const RIOT_ID_RE = /^.{3,16}#[A-Za-z0-9]{2,5}$/;
@@ -98,7 +98,34 @@ const lpHistory = (() => { const r = rng(77); let lp = 40; return Array.from({ l
 
 const pool = mastery.map((m, i) => { const r = rng(400 + i)(), games = Math.round(m.points / 9000) + 3; return { champion: m.champion, games, wins: Math.round(games * (0.44 + r * 0.22)), points: m.points }; });
 
+/** A fixed demo lobby. Any Riot ID starting with "Offline" is reported as not in a game, to demo that state. */
+function liveDemo(riotId: string): LiveGame {
+  const picks = DEFS.slice(0, 10), r = rng(31337), tiers = ["GOLD", "PLATINUM", "EMERALD", "EMERALD", "DIAMOND"] as const;
+  const players: LivePlayer[] = picks.map(([id, name], i) => {
+    const wins = 40 + Math.floor(r() * 120), losses = 40 + Math.floor(r() * 110), games = 200 + Math.floor(r() * 8000);
+    return { riotId: i === 0 ? riotId : `Player ${i + 1}#EUW`, champion: id, championName: name, team: i < 5 ? "blue" : "red", isYou: i === 0, jungle: id === "LeeSin" || id === "Khazix",
+      hotStreak: i === 3, rank: i === 7 ? null : { tier: tiers[Math.floor(r() * tiers.length)], division: (["I", "II", "III", "IV"] as const)[Math.floor(r() * 4)], lp: Math.floor(r() * 99), wins, losses },
+      champGames: games, champWins: Math.round(games * (0.46 + r() * 0.08)) };
+  });
+  return { inGame: true, queue: "Ranked Solo", mode: "CLASSIC", lengthSec: 372, players,
+    bans: [["Zed", "Zed", "blue"], ["Yasuo", "Yasuo", "blue"], ["Aurora", "Aurora", "red"]].map(([champion, championName, team]) => ({ champion, championName, team: team as "blue" | "red" })) };
+}
+
+/** Demo recap for a mock match: you play a bit above the demo averages. */
+function recapDemo(matchId?: string): PostGameRecap {
+  const m = matches.find((x) => x.id === matchId) ?? matches[0], r = rng(4242 + matches.indexOf(m)), min = m.durationSec / 60;
+  const kda = (m.kills + m.assists) / Math.max(1, m.deaths), cs = m.cs / min, damage = 380 + r() * 200, gold = 330 + r() * 120;
+  const mk = (id: "kda" | "cs" | "damage" | "gold", label: string, unit: string, you: number, avg: number) => ({ id, label, unit, you, vsRank: avg, vsYou: avg * (0.9 + r() * 0.2), lobbyRank: 1 + Math.floor(r() * 10) });
+  return { matchId: m.id, queue: m.queue, win: m.win, durationSec: m.durationSec, playedAt: m.playedAt, champion: m.champion, championName: m.champion, role: m.role,
+    kills: m.kills, deaths: m.deaths, assists: m.assists, killParticipation: 0.35 + r() * 0.35, damageShare: 0.15 + r() * 0.2,
+    metrics: [mk("kda", "KDA", "", kda, 2.6), mk("cs", "CS per minute", "/min", cs, 6.4), mk("damage", "Damage per minute", "/min", damage, 460), mk("gold", "Gold per minute", "/min", gold, 380)],
+    baseline: { label: `Demo ${m.champion} averages (mock data)`, games: 1234 }, personal: { games: 8 } };
+}
+
 export const mockApi: ApexApi = {
+  getRecap: async (_id, matchId) => { await delay(null, 450); if (matchId && !matches.some((x) => x.id === matchId)) throw new Error("Match not found"); return recapDemo(matchId); },
+  getLiveGame: async (riotId) => { await delay(null, 500); if (!RIOT_ID_RE.test(riotId)) throw new Error("Riot ID must look like Name#TAG");
+    return riotId.toLowerCase().startsWith("offline") ? { inGame: false } : liveDemo(riotId); },
   getDraftStats: async () => null,
   getFilterOptions: () => delay({ platforms: [], ranks: [], patches: [] }, 50),
   getChampionPool: () => delay(pool, 300),

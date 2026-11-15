@@ -83,6 +83,18 @@ export function makeStore(db: DatabaseSync) {
     matchCount: (f: Filter) => { const w = filt(f); return (db.prepare(`SELECT COUNT(*) n FROM matches m WHERE 1=1${w.sql}`).get(...w.args) as { n: number }).n; },
     championRows(f: Filter, role?: Role) { const w = filt(f); return q<{ champion: string; role: string | null; games: number; wins: number }>(
       `SELECT p.champion, p.role, COUNT(*) games, SUM(p.win) wins FROM participants p JOIN matches m ON m.id = p.match_id WHERE 1=1${w.sql}${role ? " AND p.role = ?" : ""} GROUP BY p.champion, p.role`, ...w.args, ...(role ? [role] : [])); },
+    /**
+     * Average per-game performance of comparable collected games (same role, optionally same champion and rank bracket).
+     * kda = (kills + assists) / max(deaths, 1) per game, the rest are per minute. Games without stored stats are ignored.
+     */
+    averages(a: { role: string; champion?: string; bracket?: string }): { games: number; kda: number; cs: number; damage: number; gold: number } {
+      const cond = ["p.role = ?", "p.kills IS NOT NULL", "m.duration >= 300"], args: (string | number)[] = [a.role];
+      if (a.champion) { cond.push("p.champion = ?"); args.push(a.champion); }
+      if (a.bracket) { cond.push("m.bracket = ?"); args.push(a.bracket); }
+      const r = db.prepare(`SELECT COUNT(*) games, AVG((p.kills + p.assists) * 1.0 / MAX(p.deaths, 1)) kda, AVG(p.cs * 60.0 / m.duration) cs, AVG(p.damage * 60.0 / m.duration) damage, AVG(p.gold * 60.0 / m.duration) gold
+        FROM participants p JOIN matches m ON m.id = p.match_id WHERE ${cond.join(" AND ")}`).get(...args) as { games: number; kda: number | null; cs: number | null; damage: number | null; gold: number | null };
+      return { games: r.games, kda: r.kda ?? 0, cs: r.cs ?? 0, damage: r.damage ?? 0, gold: r.gold ?? 0 };
+    },
     bans(f: Filter) { const w = filt(f); return q<{ k: number; n: number }>(`SELECT b.champion_key k, COUNT(*) n FROM bans b JOIN matches m ON m.id = b.match_id WHERE 1=1${w.sql} GROUP BY k`, ...w.args); },
     /** Lane matchups: same role, opposite team. */
     matchups(champion: string, f: Filter): Row[] { const w = filt(f); return q<Row>(`SELECT b.champion name, COUNT(*) games, SUM(a.win) wins FROM participants a JOIN participants b ON a.match_id = b.match_id AND a.team <> b.team AND a.role IS NOT NULL AND a.role = b.role

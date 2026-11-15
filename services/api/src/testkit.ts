@@ -3,7 +3,7 @@ import { makeCache, type Cache } from "./db";
 import type { DD } from "./ddragon";
 import { makeStore, type Store } from "./store";
 import { Collector } from "./collector";
-import type { RiotApi, RiotMatch, RiotParticipant } from "./riot";
+import { HttpError, type RiotActiveGame, type RiotApi, type RiotMatch, type RiotParticipant } from "./riot";
 
 export const memoryCache = (): Cache => makeCache(new DatabaseSync(":memory:"));
 export const participant = (i: number, over: Partial<RiotParticipant> = {}): RiotParticipant => ({ puuid: `p${i}`, riotIdGameName: `Player${i}`, championName: ["Ahri", "Jinx", "Thresh", "Garen", "LeeSin", "Lux", "Zed", "Ashe", "Ornn", "Yasuo"][i], teamId: i < 5 ? 100 : 200,
@@ -36,16 +36,22 @@ export function diverseStore(): Store {
 }
 export const idleCollector = (riot: RiotApi, store: Store) => new Collector(riot, store, { platforms: ["euw1"], tiers: ["EMERALD"], pages: 1, matchesPerPlayer: 5, recrawlMs: 1000, concurrency: 1 });
 
+/** A live game: p0..p4 blue, p5..p9 red, p4 (Lee Sin) carries Smite, one bot-free lobby, one ban of Ahri and one empty ban slot. */
+export const activeGameFixture = (): RiotActiveGame => ({ gameId: 1, gameMode: "CLASSIC", gameLength: 372, gameQueueConfigId: 420,
+  participants: [103, 222, 412, 86, 64, 99, 238, 22, 516, 157].map((championId, i) => ({ puuid: `p${i}`, riotId: `Player${i}#EUW`, teamId: i < 5 ? 100 : 200, championId, spell1Id: i === 4 || i === 8 ? 11 : 4, spell2Id: 14 })),
+  bannedChampions: [{ championId: 103, teamId: 100 }, { championId: -1, teamId: 200 }, { championId: 222, teamId: 200 }] });
+
 /** Fake Riot that counts calls, so tests can prove caching works. */
 export function fakeRiot(): RiotApi & { calls: Record<string, number> } {
   const calls: Record<string, number> = {}, hit = (k: string) => { calls[k] = (calls[k] ?? 0) + 1; };
   return { calls,
-    account: async (name, tag) => { hit("account"); if (name === "Nobody") throw Object.assign(new Error("x"), { status: 404 }) as never; return { puuid: "p0", gameName: name, tagLine: tag }; },
+    account: async (name, tag) => { hit("account"); if (name === "Nobody") throw Object.assign(new Error("x"), { status: 404 }) as never; return { puuid: name === "Offline" ? "p-offline" : "p0", gameName: name, tagLine: tag }; },
     summoner: async () => { hit("summoner"); return { summonerLevel: 321 }; },
-    league: async () => { hit("league"); return [{ queueType: "RANKED_FLEX_SR", tier: "GOLD", rank: "I", leaguePoints: 1, wins: 1, losses: 1 }, { queueType: "RANKED_SOLO_5x5", tier: "EMERALD", rank: "II", leaguePoints: 64, wins: 87, losses: 79 }]; },
+    league: async (puuid) => { hit("league"); return [{ queueType: "RANKED_FLEX_SR", tier: "GOLD", rank: "I", leaguePoints: 1, wins: 1, losses: 1 }, { queueType: "RANKED_SOLO_5x5", tier: "EMERALD", rank: "II", leaguePoints: 64, wins: 87, losses: 79, hotStreak: puuid === "p1" }]; },
     ladder: async () => { hit("ladder"); return [{ puuid: "p0", tier: "EMERALD", rank: "II", leaguePoints: 10 }, { puuid: "p1", tier: "EMERALD", rank: "II", leaguePoints: 20 }, { tier: "EMERALD", rank: "II", leaguePoints: 30 }]; },
     matchIds: async (_p, _r, start, count) => { hit("matchIds"); return Array.from({ length: Math.min(count, 25 - start) }, (_, i) => `EUW1_${start + i}`); },
     match: async (id) => { hit("match"); return matchFixture(id); },
+    activeGame: async (puuid) => { hit("activeGame"); if (puuid === "p-offline") throw new HttpError(404, "Not found on Riot's servers"); return activeGameFixture(); },
     mastery: async () => { hit("mastery"); return [{ championId: 103, championLevel: 10, championPoints: 250000 }, { championId: 999999, championLevel: 5, championPoints: 1 }]; },
   };
 }

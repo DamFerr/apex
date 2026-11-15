@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app";
 import { HttpError } from "./riot";
+import { DatabaseSync } from "./sqlite";
+import { makeStore } from "./store";
 import { diverseStore, fakeDD, fakeRiot, idleCollector, memoryCache, seededStore } from "./testkit";
 
 let store: ReturnType<typeof seededStore>, riot: ReturnType<typeof fakeRiot>, app: Awaited<ReturnType<typeof buildApp>>;
@@ -158,4 +160,66 @@ describe("draft data and champion pool APIs", () => {
     const pool = (await get("/v1/players/Test%23EUW/pool")).json();
     expect(pool[0]).toEqual({ champion: "Ahri", games: 20, wins: 20, points: 250000 });   // the fake player is Ahri in all 20 recent games
   });
+
+  describe("live game", () => {
+    it("returns all ten players with rank, smite flag, bans and who you are", async () => {
+      const g = (await get("/v1/live/Test%23EUW")).json();
+      expect(g).toMatchObject({ inGame: true, queue: "Ranked Solo", mode: "CLASSIC", lengthSec: 372 });
+      expect(g.players).toHaveLength(10);
+      expect(g.players.filter((p: { isYou: boolean }) => p.isYou).map((p: { riotId: string }) => p.riotId)).toEqual(["Player0#EUW"]);
+      expect(g.players[0]).toMatchObject({ champion: "Ahri", team: "blue", rank: { tier: "EMERALD", division: "II", wins: 87, losses: 79 }, jungle: false });
+      expect(g.players.filter((p: { jungle: boolean }) => p.jungle).map((p: { champion: string }) => p.champion)).toEqual(["LeeSin", "Ornn"]);
+      expect(g.players[1].hotStreak).toBe(true); expect(g.players[0].hotStreak).toBe(false);
+      expect(g.bans).toEqual([{ champion: "Ahri", championName: "Ahri", team: "blue" }, { champion: "Jinx", championName: "Jinx", team: "red" }]); // the empty ban slot (-1) is dropped
+    });
+    it("adds the collected win rate for each champion", async () => {
+      const g = (await get("/v1/live/Test%23EUW")).json();
+      expect(g.players[0].champGames).toBeGreaterThan(0); // Ahri appears in the seeded games
+      expect(g.players[0].champWins).toBeLessThanOrEqual(g.players[0].champGames);
+    });
+    it("says not in game (200, not an error) when Riot returns 404 for the Spectator lookup", async () => {
+      const r = await get("/v1/live/Offline%23EUW"); expect(r.statusCode).toBe(200); expect(r.json()).toEqual({ inGame: false });
+    });
+    it("still reports an unknown player as 404", async () => { expect((await get("/v1/live/Nobody%23EUW")).statusCode).toBe(404); });
+    it("shows no rank for a player whose rank lookup fails, instead of failing the whole screen", async () => {
+      const league = riot.league; riot.league = async (puuid, pf) => { if (puuid === "p3") throw new HttpError(502, "boom"); return league(puuid, pf); };
+      const g = (await get("/v1/live/Test%23EUW")).json();
+      expect(g.players[3].rank).toBeNull(); expect(g.players[2].rank).not.toBeNull();
+    });
+    it("caches a lookup so refreshes do not spend Riot calls", async () => {
+      await get("/v1/live/Test%23EUW"); const before = { ...riot.calls }; await get("/v1/live/Test%23EUW");
+      expect(riot.calls.activeGame).toBe(before.activeGame); expect(riot.calls.league).toBe(before.league);
+    });
+    it("rejects malformed Riot IDs", async () => { expect((await get("/v1/live/nohashtag")).statusCode).toBe(400); });
+  });
+
+  describe("post-game recap", () => {
+    it("recaps the latest game against Emerald Ahri Top averages, your own games and the lobby", async () => {
+      const r = (await get("/v1/players/Test%23EUW/recap")).json();
+      expect(r).toMatchObject({ matchId: "EUW1_0", queue: "Ranked Solo", win: true, champion: "Ahri", role: "TOP", kills: 0, deaths: 2, assists: 3 });
+      expect(r.baseline).toEqual({ label: "Emerald Ahri Top (Ranked Solo)", games: 40 });
+      expect(r.personal).toEqual({ games: 10 });
+      expect(r.killParticipation).toBeCloseTo(0.3, 6); expect(r.damageShare).toBeCloseTo(10000 / 50010, 6);
+      const byId = Object.fromEntries(r.metrics.map((m: { id: string }) => [m.id, m]));
+      expect(byId.kda).toMatchObject({ you: 1.5, vsRank: 1.5, vsYou: 1.5, lobbyRank: 10 }); // every other player has a better KDA
+      expect(byId.gold.lobbyRank).toBe(1); // nobody earned more gold than you (all equal)
+      expect(byId.cs.you).toBeCloseTo(110 / 30, 6);
+    });
+    it("recaps a chosen match", async () => { expect((await get("/v1/players/Test%23EUW/recap?matchId=EUW1_5")).json().matchId).toBe("EUW1_5"); });
+    it("rejects an unknown match id", async () => { expect((await get("/v1/players/Test%23EUW/recap?matchId=XX_1")).statusCode).toBe(400); });
+    it("says so when the player has no games", async () => {
+      riot.matchIds = async () => []; const r = await get("/v1/players/Test%23EUW/recap"); expect(r.statusCode).toBe(404);
+    });
+    it("shows no rank comparison when too few games are collected, instead of a misleading one", async () => {
+      const empty = makeStore(new DatabaseSync(":memory:"));
+      const a = await buildApp({ riot, cache: memoryCache(), dd: fakeDD, store: empty, collector: idleCollector(riot, empty), defaultPlatform: "euw1" });
+      const r = (await a.inject({ method: "GET", url: "/v1/players/Test%23EUW/recap" })).json();
+      expect(r.baseline).toBeNull(); expect(r.metrics.every((m: { vsRank: number | null }) => m.vsRank === null)).toBe(true);
+    });
+    it("shows no personal comparison with fewer than 3 other games in the role", async () => {
+      riot.matchIds = async () => ["EUW1_0", "EUW1_1", "EUW1_2"]; // only 2 others
+      const r = (await get("/v1/players/Test%23EUW/recap")).json(); expect(r.personal).toBeNull(); expect(r.metrics[0].vsYou).toBeNull();
+    });
+  });
 });
+

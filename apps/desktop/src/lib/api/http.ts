@@ -28,6 +28,8 @@ export function createHttpApi(base: () => string, fallback: ApexApi): ApexApi {
     getChampion: (id, f) => get(`/v1/champions/${encodeURIComponent(id)}`, filterParams(f)),
     getFilterOptions: () => get("/v1/filters"),
     getDraftStats: (f) => get("/v1/draft/data", filterParams(f)),
+    getRecap: (id, matchId) => get(`${player(id)}/recap`, matchId ? { matchId } : {}),
+    getLiveGame: (id) => get(`/v1/live/${encodeURIComponent(id)}`),
     getChampionPool: (id) => get(`${player(id)}/pool`),
     // LP history needs the data collector (snapshots over time); Riot has no history endpoint.
     getLpHistory: async () => { throw new Error("LP history needs the data collector, which comes in a later step."); },

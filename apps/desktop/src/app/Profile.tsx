@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import type { MatchSummary } from "@apex/schema";
 import { Chip, ProgressRing, Skeleton } from "../components/ui";
 import { api, useScope, useSummoner } from "../lib/api";
@@ -50,7 +50,8 @@ function MatchRow({ m, open, onToggle, riotId }: { m: MatchSummary; open: boolea
       </button>
       <AnimatePresence initial={false}>
         {open && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.2 }} className="overflow-hidden"><Detail id={m.id} riotId={riotId} /></motion.div>}
+          transition={{ duration: 0.2 }} className="overflow-hidden"><Detail id={m.id} riotId={riotId} />
+            <div className="px-4 pb-3"><Link to={`/recap/${encodeURIComponent(riotId)}/${encodeURIComponent(m.id)}`} className="focus-ring text-sm text-accent hover:underline rounded">Open full recap →</Link></div></motion.div>}
       </AnimatePresence>
     </li>
   );

@@ -25,3 +25,7 @@ export const useMastery = (id: string) => useQuery({ queryKey: [useScope(), "mas
 export const useLpHistory = (id: string) => useQuery({ queryKey: [useScope(), "lp", id], queryFn: () => api.getLpHistory(id) });
 export const usePool = (id = DEMO_ID) => useQuery({ queryKey: [useScope(), "pool", id], queryFn: () => api.getChampionPool(id) });
 export const useDraftStats = () => { const f = useUi((s) => s.statsFilter); return useQuery({ queryKey: [useScope(), "draftstats", f], queryFn: () => api.getDraftStats(f), enabled: useUi((s) => s.dataSource === "backend"), staleTime: 60_000 }); };
+/** Refreshes every 30 s while a game is running (the backend caches for 45 s, so this is cheap). retry is off so "not found" shows at once. */
+export const useLiveGame = (id: string) => useQuery({ queryKey: [useScope(), "live", id], queryFn: () => api.getLiveGame(id), enabled: !!id, retry: false, staleTime: 15_000,
+  refetchInterval: (q) => (q.state.data?.inGame ? 30_000 : false) });
+export const useRecap = (id: string, matchId?: string) => useQuery({ queryKey: [useScope(), "recap", id, matchId ?? "latest"], queryFn: () => api.getRecap(id, matchId), enabled: !!id, retry: false, staleTime: 60_000 });
