@@ -1,4 +1,4 @@
-import { buildTierList, GRADE_CUTS, MIN_GRADED_GAMES, type Grade } from "@apex/stats-core";
+import { buildTierList, GRADE_CUTS, minListedGames, type Grade } from "@apex/stats-core";
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -25,12 +25,14 @@ export function TierList() {
     return buildTierList(data.champions.map((c) => ({ id: c.id, games: c.games, wins: c.wins, bans: c.bans })), data.totalGames)
       .map((r) => ({ ...r, name: names.get(r.id) ?? r.id }));
   }, [data]);
-  const bands = [...GRADE_CUTS.map(([g]) => g), null] as (Grade | null)[];
+  const bands = GRADE_CUTS.map(([g]) => g) as Grade[];
+  const hidden = data ? data.champions.length - rows.length : 0, bar = data ? minListedGames(data.champions.reduce((s, c) => s + c.games, 0)) : 0;
   return (<>
     <h1 className="font-display text-3xl font-semibold tracking-tight">Tier List</h1>
     <p className="text-sm text-muted mt-1 mb-5">
       Grades compare champions within one role: win-rate edge (Bayesian-adjusted) plus a small bonus for pick and ban rate.
-      Champions under {MIN_GRADED_GAMES} games are listed but not graded.
+      Champions with too little data in this role (under {bar.toLocaleString()} games) are hidden, because their numbers are often wrong.
+      {hidden > 0 && ` ${hidden} hidden.`}
     </p>
     <FilterBar />
     <div className="flex flex-wrap items-center gap-2 mb-4" role="group" aria-label="Role">
@@ -38,13 +40,13 @@ export function TierList() {
     </div>
     <div className="glass rounded-lg p-2 divide-y divide-line/5">
       {!data && Array.from({ length: 4 }, (_, i) => <div key={i} className="p-2"><Skeleton className="h-14" /></div>)}
-      {data && rows.length === 0 && <div className="p-8 text-sm text-muted text-center">No collected games match these filters yet. Try “All regions” or a lower rank, or check back once the collector has more games.</div>}
+      {data && rows.length === 0 && <div className="p-8 text-sm text-muted text-center">Not enough collected games for this role and these filters yet. Try “All regions” or a lower rank, or check back once the collector has more games.</div>}
       {data && bands.map((g) => {
         const band = rows.filter((r) => r.grade === g);
         if (band.length === 0) return null;
         return (
-          <section key={g ?? "none"} aria-label={g ? `Tier ${g}` : "Not enough data"} className="flex items-start gap-4 p-3">
-            <div className={`w-14 shrink-0 h-14 rounded-md border grid place-items-center font-display text-xl font-semibold ${g ? GRADE_STYLE[g] : "border-line/10 text-muted text-xs text-center"}`}>{g ?? "n/a"}</div>
+          <section key={g} aria-label={`Tier ${g}`} className="flex items-start gap-4 p-3">
+            <div className={`w-14 shrink-0 h-14 rounded-md border grid place-items-center font-display text-xl font-semibold ${GRADE_STYLE[g]}`}>{g}</div>
             <motion.ul key={`${role}-${g}`} initial="h" animate="s" variants={{ s: { transition: { staggerChildren: 0.025 } } }} className="flex flex-wrap gap-2 min-w-0">
               {band.map((r) => (
                 <motion.li key={r.id} variants={{ h: { opacity: 0, y: 6 }, s: { opacity: 1, y: 0 } }} whileHover={{ y: -2 }} transition={spring}>

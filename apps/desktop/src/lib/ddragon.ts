@@ -40,3 +40,14 @@ export function fetchRunes(): Promise<RuneStyle[]> {
   })().catch((e) => { runeCache = null; throw e; });
   return runeCache;
 }
+
+/**
+ * Display name for a champion id from the backend or Riot ("MonkeyKing" -> "Wukong", "DrMundo" -> "Dr. Mundo", "Velkoz" -> "Vel'Koz").
+ * Names come from Data Dragon; until they load (or offline) the id is shown as is.
+ */
+export function useChampName(): (id: string) => string {
+  const list = useDdChampions().data;
+  if (!list) return (id) => id;
+  const byId = new Map(list.map((c) => [c.id, c.name]));
+  return (id) => byId.get(id) ?? id;
+}

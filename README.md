@@ -33,7 +33,7 @@ Tests: unit tests for the maths and logic (`pnpm test`) and end-to-end browser t
 | Home, Profile + match detail, Champions + champion page, Draft, Settings | Built (mock data) |
 | Mock LCU, real LCU connector (Rust) | Built; real connector needs testing on your machine |
 | Overlay window (transparent, on top, click-through) | Groundwork; placeholder content |
-| Tier List (per-role grades S+ to D, Bayesian-adjusted, low-data champions ungraded) | Built (mock and collected data) |
+| Tier List (per-role grades S+ to D, Bayesian-adjusted, low-data champions hidden) | Built (mock and collected data) |
 | Live Game scouting (Spectator-v5: all 10 players, rank, season record, champion win rate, bans, 30 s refresh) | Built (mock and real; real needs a Riot key and a game in progress) |
 | Post-game recap (latest or chosen game vs collected rank averages, your own games and the lobby; grade S-D) | Built (mock and real; real baseline needs enough collected games) |
 | Real rune import (placeholder runes by champion class) | Built; needs testing on your machine |
@@ -70,9 +70,9 @@ options the collector has not filled in yet say "no data yet". Ranks are cumulat
 above it** (there is no "exactly Emerald"); "All ranks" is Iron and up.
 
 ### Data collector
-Starts by itself with `pnpm api` and covers every region and every rank (all ladders: region x tier x division), with several parallel
-workers at low priority (half of each region's rate limit, which Riot enforces per region). Pause or resume it in Settings. Optional
-`.env` settings: `COLLECT_DISABLED=1`, `COLLECT_CONCURRENCY`, `COLLECT_ONLY_PLATFORMS`, `COLLECT_ONLY_TIERS`. The service reads the key's real
+Starts by itself with `pnpm api` and covers every region and every rank (all ladders: region x tier x division), with 16 parallel
+workers at low priority (80% of each region's rate limit, which Riot enforces per region; set `COLLECT_SHARE` to change). Workers are spread over the four Riot clusters so every limit stays in use. A development key caps this at roughly 3 games per second in total. Pause or resume it in Settings. Optional
+`.env` settings: `COLLECT_DISABLED=1`, `COLLECT_CONCURRENCY`, `COLLECT_SHARE`, `COLLECT_PAGES`, `COLLECT_ONLY_PLATFORMS`, `COLLECT_ONLY_TIERS`. The service reads the key's real
 rate limits from Riot's responses, so a production key runs faster automatically.
 
 ### Players and drafts

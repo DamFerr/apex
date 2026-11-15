@@ -36,7 +36,7 @@ describe("sampleBadge", () => {
   });
 });
 
-import { buildTierList, MIN_GRADED_GAMES, tierScore } from "./index";
+import { buildTierList, MIN_GRADED_GAMES, minListedGames, tierScore } from "./index";
 
 describe("tierScore", () => {
   it("rewards a higher win rate", () => expect(tierScore(0.53, 0.5, 0.05, 0.02)).toBeGreaterThan(tierScore(0.51, 0.5, 0.05, 0.02)));
@@ -50,11 +50,16 @@ describe("tierScore", () => {
 describe("buildTierList", () => {
   const champ = (id: string, games: number, wins: number, bans = 0) => ({ id, games, wins, bans });
   it("returns an empty list for no champions", () => expect(buildTierList([], 0)).toEqual([]));
-  it("never grades tiny samples: 3/3 is listed last without a grade", () => {
+  it("leaves out champions with too little data: a lucky 3/3 never shows", () => {
     const list = buildTierList([champ("Lucky", 3, 3), champ("Solid", 2000, 1100), champ("Meh", 2000, 980)], 10000);
-    expect(list.map((r) => r.id)).toEqual(["Solid", "Meh", "Lucky"]);
-    expect(list[2].grade).toBeNull();
-    expect(list[0].grade).not.toBeNull();
+    expect(list.map((r) => r.id)).toEqual(["Solid", "Meh"]);
+    expect(list.every((r) => r.grade !== null)).toBe(true);
+  });
+  it("raises the bar with the amount of data: under 0.5% of the role's games is hidden", () => {
+    expect(minListedGames(1000)).toBe(50);
+    expect(minListedGames(200_000)).toBe(1000);
+    const list = buildTierList([champ("Big", 99_000, 49_500), champ("Small", 400, 200), champ("Niche", 1_000, 500)], 100_000);
+    expect(list.map((r) => r.id).sort()).toEqual(["Big", "Niche"]);   // 400 < 500 (0.5% of 100,400 games)
   });
   it("ranks the strongest first and grades by percentile", () => {
     const list = buildTierList(Array.from({ length: 20 }, (_, i) => champ(`C${i}`, 1000, 440 + i * 6)), 20000);

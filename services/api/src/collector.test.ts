@@ -15,6 +15,22 @@ function setup(over: Partial<CollectorConfig> = {}) {
 const own = (riot: ReturnType<typeof fakeRiot>) => { riot.ladder = async (pf, tier, div) => [{ puuid: `${pf}-${tier}-${div}`, tier, rank: div, leaguePoints: 1 }]; }; // players are unique per ladder, like real life
 
 describe("Collector", () => {
+  it("sends parallel workers to different regional clusters, because Riot limits each cluster separately", async () => {
+    const { c, riot, store } = setup({ platforms: ["euw1", "eun1", "kr", "na1"], tiers: ["MASTER"], concurrency: 3 });
+    for (const [pf, n] of [["euw1", 5], ["eun1", 5], ["kr", 1], ["na1", 1]] as const) store.addSeeds(Array.from({ length: n }, (_, i) => `${pf}-${i}`), "MASTER", pf); // europe has most players
+    const regions: string[] = []; let release!: () => void; const gate = new Promise<void>((r) => (release = r));
+    riot.matchIds = async (_p, region) => { regions.push(region); await gate; return []; };
+    const crawl = (c as unknown as { crawlOne(): Promise<boolean> }).crawlOne.bind(c);
+    const running = Promise.all([crawl(), crawl(), crawl()]);       // three workers start at once
+    release(); await running;
+    expect(new Set(regions)).toEqual(new Set(["europe", "asia", "americas"]));   // not three workers queueing on europe
+  });
+  it("hides an old error: the status only keeps it while it is recent or fatal", async () => {
+    const { c, riot } = setup(); let t = 0; riot.ladder = async () => { if (t++ === 0) throw new HttpError(502, "Could not reach Riot's servers (ECONNRESET)"); return []; };
+    c.start(); await new Promise((r) => setTimeout(r, 30)); await c.halt();
+    expect(c.status).toMatchObject({ lastError: expect.stringContaining("ECONNRESET"), fatal: false, errorsThisRun: 1 });
+    expect(c.status.lastErrorAt).toBeGreaterThan(0);
+  });
   it("covers every region x tier x division, with a single division for Master and above", () => {
     const { c } = setup({ platforms: ["euw1", "na1"], tiers: ["EMERALD", "MASTER"] });
     expect(c.ladders()).toHaveLength(2 * (4 + 1));

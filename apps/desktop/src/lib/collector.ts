@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useUi } from "./store";
 
-export interface CollectorStatus { running: boolean; lastError: string | null; savedThisRun: number; matches: number; seeds: number; crawled: number; latestPatch: string | null; ladders: { seeded: number; total: number }; workers: number }
+export interface CollectorStatus { running: boolean; lastError: string | null; fatal: boolean; errorsThisRun: number; savedThisRun: number; matches: number; seeds: number; crawled: number; latestPatch: string | null; ladders: { seeded: number; total: number }; workers: number }
 
 export const useCollector = () => {
   const on = useUi((s) => s.dataSource === "backend"), base = useUi((s) => s.backendUrl);

@@ -52,10 +52,11 @@ export function makeStore(db: DatabaseSync) {
     markSeeded: (platform: string, tier: string, division: string, at: number) => void db.prepare("INSERT OR REPLACE INTO ladder_runs (platform, tier, division, at) VALUES (?, ?, ?, ?)").run(platform, tier, division, at),
     /**
      * Takes the least recently crawled player and marks them crawled in the same step, so parallel workers never get the same one.
-     * Ties (every new player) are broken randomly, which spreads the workers across regions.
+     * Ties (every new player) are broken randomly. `platforms` restricts the choice (the collector uses it to balance the regional clusters).
      */
-    claimSeed(olderThan: number, now: number) {
-      const row = db.prepare("SELECT puuid, platform, tier FROM seeds WHERE crawled_at < ? AND platform IS NOT NULL ORDER BY crawled_at, RANDOM() LIMIT 1").get(olderThan) as { puuid: string; platform: string; tier: string } | undefined;
+    claimSeed(olderThan: number, now: number, platforms?: string[]) {
+      const only = platforms?.length ? ` AND platform IN (${platforms.map(() => "?").join(",")})` : "";
+      const row = db.prepare(`SELECT puuid, platform, tier FROM seeds WHERE crawled_at < ? AND platform IS NOT NULL${only} ORDER BY crawled_at, RANDOM() LIMIT 1`).get(olderThan, ...(platforms ?? [])) as { puuid: string; platform: string; tier: string } | undefined;
       if (row) db.prepare("UPDATE seeds SET crawled_at = ? WHERE puuid = ?").run(now, row.puuid);
       return row;
     },

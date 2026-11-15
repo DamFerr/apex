@@ -9,7 +9,9 @@ export const config = {
   ratePer2Min: num(process.env.RATE_PER_2MIN, 100),
   // The collector starts with the backend and covers every region and rank. COLLECT_DISABLED=1 turns that off.
   autoCollect: process.env.COLLECT_DISABLED !== "1",
-  collectConcurrency: num(process.env.COLLECT_CONCURRENCY, 4),
+  collectConcurrency: Math.max(1, Math.floor(num(process.env.COLLECT_CONCURRENCY, 16))),
+  // Share of each rate-limit window the collector may use (0.1 to 0.95). The rest stays free for the app itself.
+  collectShare: Math.min(0.95, Math.max(0.1, num(process.env.COLLECT_SHARE, 0.8))),
   // Optional restriction (comma-separated). Leave unset to collect everything.
   collectPlatforms: process.env.COLLECT_ONLY_PLATFORMS ? process.env.COLLECT_ONLY_PLATFORMS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : null,
   collectTiers: process.env.COLLECT_ONLY_TIERS ? process.env.COLLECT_ONLY_TIERS.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) : null,

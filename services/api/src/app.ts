@@ -111,17 +111,26 @@ export async function buildApp(deps: Deps) {
   }
   const roleOfQuery = (r?: string) => (r && ROLES.includes(r) ? (r as Role) : undefined);
 
+  /** A role counts for a champion when it holds at least 10% of the champion's games (and 2 games). */
+  const isRealRole = (roleGames: number, champGames: number) => roleGames >= Math.max(2, champGames * 0.1);
+
   async function summaries(f: ReturnType<typeof filterOf>, role?: Role): Promise<{ list: ChampionSummary[]; total: number }> {
     const { champs } = await dd(), byId = new Map([...champs].map(([key, c]) => [c.id, { key, ...c }])), bans = new Map(store.bans(f).map((b) => [b.k, b.n]));
-    const per = new Map<string, { games: number; wins: number; roles: { role: Role; games: number }[] }>();
-    for (const r of store.championRows(f, role)) {
-      const e = per.get(r.champion) ?? { games: 0, wins: 0, roles: [] };
-      e.games += r.games; e.wins += r.wins; if (r.role) e.roles.push({ role: r.role as Role, games: r.games }); per.set(r.champion, e);
+    // Always read every role, so a champion's share in each role is known. Asking for one role then keeps only champions that really play it:
+    // a champion with a handful of games in a role it is not played in (an off-role pick, a role-detection miss) is not shown there.
+    const per = new Map<string, { games: number; wins: number; byRole: Map<Role, { games: number; wins: number }> }>();
+    for (const r of store.championRows(f)) {
+      const e = per.get(r.champion) ?? { games: 0, wins: 0, byRole: new Map() };
+      e.games += r.games; e.wins += r.wins;
+      if (r.role) { const x = e.byRole.get(r.role as Role) ?? { games: 0, wins: 0 }; x.games += r.games; x.wins += r.wins; e.byRole.set(r.role as Role, x); }
+      per.set(r.champion, e);
     }
     const list = [...per].flatMap(([id, e]) => {
       const c = byId.get(id); if (!c) return [];
-      return [{ id, name: c.name, tags: c.tags ?? [], games: e.games, wins: e.wins, bans: bans.get(c.key) ?? 0,
-        roles: e.roles.filter((x) => x.games >= Math.max(2, e.games * 0.1)).sort((a, b) => b.games - a.games).map((x) => x.role) }];
+      const roles = [...e.byRole].filter(([, x]) => isRealRole(x.games, e.games)).sort((a, b) => b[1].games - a[1].games);
+      const mine = role ? e.byRole.get(role) : undefined;
+      if (role && (!mine || !isRealRole(mine.games, e.games))) return [];
+      return [{ id, name: c.name, tags: c.tags ?? [], games: mine?.games ?? e.games, wins: mine?.wins ?? e.wins, bans: bans.get(c.key) ?? 0, roles: roles.map(([r]) => r) }];
     });
     return { list, total: store.matchCount(f) };
   }
@@ -225,7 +234,8 @@ export async function buildApp(deps: Deps) {
 
   // ---- Collector control (POSTs need a custom header, so other websites cannot trigger them from your browser) ----
   const guard = (req: { headers: Record<string, unknown> }) => { if (req.headers["x-apex"] !== "1") throw new HttpError(403, "Missing X-Apex header"); };
-  const collectorStatus = () => ({ ...collector.status, ...store.counts(), latestPatch: store.latestPatch() ?? null, ladders: collector.progress(), workers: collector.cfg.concurrency });
+  // A failed request is retried and usually a blip, so only a recent error (or a fatal one such as a bad key) is shown. An old one would stay on screen forever.
+  const collectorStatus = () => ({ ...collector.status, lastError: collector.status.lastError && (collector.status.fatal || now() - collector.status.lastErrorAt < 3 * MIN) ? collector.status.lastError : null, ...store.counts(), latestPatch: store.latestPatch() ?? null, ladders: collector.progress(), workers: collector.cfg.concurrency });
   app.get("/v1/collector", async () => collectorStatus());
   app.post("/v1/collector/start", async (req) => { guard(req); collector.start(); return collectorStatus(); });
   app.post("/v1/collector/stop", async (req) => { guard(req); await collector.halt(); return collectorStatus(); });

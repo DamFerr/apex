@@ -39,11 +39,15 @@ export interface TierRow {
   /** Bayesian-shrunk win rate (0..1). */ winRate: number;
   /** Shrunk win rate minus the average of the list, in percentage points. */ delta: number;
   pickRate: number; banRate: number; score: number;
-  /** null = not enough games to grade honestly. */ grade: Grade | null;
+  grade: Grade | null;
 }
 
-/** Below this many games a champion is listed but never graded. */
+/** A champion needs at least this many games in a role to appear in that role's tier list at all. */
 export const MIN_GRADED_GAMES = 50;
+/** ...and at least this share of the role's games (0.5%), so the bar rises together with the amount of collected data. */
+export const MIN_ROLE_PICKRATE = 0.005;
+/** Games a champion needs to be shown in a role's tier list, given all games played in that role. */
+export const minListedGames = (roleGames: number) => Math.max(MIN_GRADED_GAMES, Math.ceil(roleGames * MIN_ROLE_PICKRATE));
 /** Share of graded champions per grade, best first: top 5% S+, next 15% S, next 25% A, next 30% B, next 15% C, last 10% D. */
 export const GRADE_CUTS: [Grade, number][] = [["S+", 0.05], ["S", 0.2], ["A", 0.45], ["B", 0.75], ["C", 0.9], ["D", 1]];
 
@@ -58,23 +62,21 @@ export function tierScore(winRate: number, baseline: number, pickRate: number, b
 
 /**
  * Turns raw champion counts into a graded, ranked list. `totalGames` is the denominator for pick and ban rates.
- * Champions under MIN_GRADED_GAMES get no grade and sit at the bottom, so a lucky 3/3 can never top the list.
+ * Champions below `minListedGames` are left out entirely: their win rates and even their role are too often wrong to show.
  */
 export function buildTierList(inputs: TierInput[], totalGames: number, priorStrength = 50): TierRow[] {
   const games = inputs.reduce((s, c) => s + c.games, 0), wins = inputs.reduce((s, c) => s + c.wins, 0);
-  const baseline = games > 0 ? wins / games : 0.5;
-  const rows: TierRow[] = inputs.map((c) => {
+  const baseline = games > 0 ? wins / games : 0.5, minGames = minListedGames(games);
+  const rows: TierRow[] = inputs.filter((c) => c.games >= minGames).map((c) => {
     const winRate = shrink(c.wins, c.games, baseline, priorStrength);
     const pickRate = totalGames > 0 ? c.games / totalGames : 0, banRate = totalGames > 0 ? c.bans / totalGames : 0;
     return { ...c, winRate, delta: (winRate - baseline) * 100, pickRate, banRate, score: tierScore(winRate, baseline, pickRate, banRate), grade: null };
-  });
-  const graded = rows.filter((r) => r.games >= MIN_GRADED_GAMES).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-  graded.forEach((r, i) => {
-    const fraction = (i + 0.5) / graded.length;
+  }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  rows.forEach((r, i) => {
+    const fraction = (i + 0.5) / rows.length;
     r.grade = GRADE_CUTS.find(([, cut]) => fraction <= cut)![0];
   });
-  const rest = rows.filter((r) => r.games < MIN_GRADED_GAMES).sort((a, b) => b.games - a.games || a.id.localeCompare(b.id));
-  return [...graded, ...rest];
+  return rows;
 }
 
 /* ---------- Post-game performance (plan section 3.8) ---------- */

@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { useChampName } from "../lib/ddragon";
 import { Link } from "react-router-dom";
 import { useUi } from "../lib/store";
 import { shrink, wilson, sampleBadge } from "@apex/stats-core";
@@ -7,6 +8,7 @@ import { SearchBox } from "../components/SearchBox";
 import { useMatches, useSummoner } from "../lib/api";
 
 export function Home() {
+  const champName = useChampName();
   const me = useUi((s) => s.myRiotId), sum = useSummoner(me), games = useMatches(me);
   const ms = games.data ?? [];
   const wins = ms.filter((m) => m.win).length;
@@ -39,7 +41,7 @@ export function Home() {
       {ms.map((m) => (
         <motion.li key={m.id} variants={{ h: { opacity: 0, y: 8 }, s: { opacity: 1, y: 0 } }} whileHover={{ x: 3 }}
           className={`glass rounded-lg h-14 px-4 flex items-center gap-4 border-l-2 ${m.win ? "border-l-good" : "border-l-bad"}`}>
-          <span className="w-24 font-medium">{m.champion}</span>
+          <span className="w-28 font-medium truncate" title={champName(m.champion)}>{champName(m.champion)}</span>
           <span className="tabular-nums text-sm w-24">{m.kills}/{m.deaths}/{m.assists}</span>
           <span className="text-xs text-muted flex-1">{m.queue} · {Math.round(m.durationSec / 60)} min</span>
           <span className={`text-sm font-medium ${m.win ? "text-good" : "text-bad"}`}>{m.win ? "Win" : "Loss"}</span>

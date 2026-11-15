@@ -6,12 +6,14 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { MatchSummary } from "@apex/schema";
 import { Chip, ProgressRing, Skeleton } from "../components/ui";
 import { api, useScope, useSummoner } from "../lib/api";
+import { useChampName } from "../lib/ddragon";
 import { useUi } from "../lib/store";
 import { Tabs } from "../components/Tabs";
 import { LpTab, MasteryTab } from "./ProfileTabs";
 import { SearchBox } from "../components/SearchBox";
 
 function Detail({ id, riotId }: { id: string; riotId: string }) {
+  const champName = useChampName();
   const q = useQuery({ queryKey: [useScope(), "detail", id, riotId], queryFn: () => api.getMatchDetail(id, riotId) });
   if (q.isError) return <div className="p-4 text-sm text-bad">{(q.error as Error).message}</div>;
   if (!q.data) return <div className="p-4 space-y-2"><Skeleton className="h-6" /><Skeleton className="h-6" /><Skeleton className="h-6" /></div>;
@@ -25,7 +27,7 @@ function Detail({ id, riotId }: { id: string; riotId: string }) {
           <thead className="text-muted"><tr><th className="text-left font-normal">Player</th><th className="font-normal">KDA</th><th className="font-normal">CS</th><th className="text-left font-normal pl-3">Damage</th></tr></thead>
           <tbody>{q.data.participants.filter((p) => p.team === team).map((p) => (
             <tr key={p.name} className={`h-8 ${p.isYou ? "text-gold" : ""}`}>
-              <td>{p.name} <span className="text-muted">{p.champion}</span></td>
+              <td>{p.name} <span className="text-muted">{champName(p.champion)}</span></td>
               <td className="text-center tabular-nums">{p.kills}/{p.deaths}/{p.assists}</td>
               <td className="text-center tabular-nums">{p.cs}</td>
               <td className="pl-3 w-24"><div className="h-1.5 rounded-full bg-line/10"><motion.div className="h-full rounded-full bg-accent origin-left"
@@ -37,11 +39,12 @@ function Detail({ id, riotId }: { id: string; riotId: string }) {
 }
 
 function MatchRow({ m, open, onToggle, riotId }: { m: MatchSummary; open: boolean; onToggle: () => void; riotId: string }) {
+  const champName = useChampName();
   return (
     <li className="glass rounded-lg overflow-hidden">
       <button aria-expanded={open} onClick={onToggle}
         className={`focus-ring w-full h-14 px-4 flex items-center gap-4 border-l-2 text-left ${m.win ? "border-l-good" : "border-l-bad"}`}>
-        <span className="w-24 font-medium">{m.champion}</span>
+        <span className="w-28 font-medium truncate" title={champName(m.champion)}>{champName(m.champion)}</span>
         <span className="text-xs text-muted w-16">{m.role ?? "—"}</span>
         <span className="tabular-nums text-sm w-24">{m.kills}/{m.deaths}/{m.assists}</span>
         <span className="text-xs text-muted flex-1">{m.queue} · {Math.round(m.durationSec / 60)} min · {m.cs} CS · {new Date(m.playedAt).toLocaleDateString()}</span>

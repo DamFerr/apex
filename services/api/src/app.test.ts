@@ -3,7 +3,7 @@ import { buildApp } from "./app";
 import { HttpError } from "./riot";
 import { DatabaseSync } from "./sqlite";
 import { makeStore } from "./store";
-import { diverseStore, fakeDD, fakeRiot, idleCollector, memoryCache, seededStore } from "./testkit";
+import { diverseStore, fakeDD, fakeRiot, idleCollector, matchFixture, memoryCache, participant, seededStore } from "./testkit";
 
 let store: ReturnType<typeof seededStore>, riot: ReturnType<typeof fakeRiot>, app: Awaited<ReturnType<typeof buildApp>>;
 beforeEach(async () => {
@@ -58,6 +58,15 @@ describe("champion statistics API", () => {
     const r = (await get("/v1/champions?role=JUNGLE")).json();
     expect(r.champions.length).toBeGreaterThan(0);
     expect(r.champions.every((c: { roles: string[] }) => c.roles.includes("JUNGLE"))).toBe(true);
+  });
+  it("shows a champion in a role only when it really plays it there (an off-role handful of games is dropped)", async () => {
+    const db = new DatabaseSync(":memory:"), st = makeStore(db);
+    for (let n = 0; n < 30; n++) st.saveMatch(matchFixture(`EUW1_${n}`), "EMERALD", "euw1");          // Ahri is mid... in the fixture she is p0 = TOP
+    for (let n = 30; n < 32; n++) st.saveMatch(matchFixture(`EUW1_${n}`, { participants: Array.from({ length: 10 }, (_, i) => participant(i, i === 0 ? { teamPosition: "JUNGLE" } : {})) }), "EMERALD", "euw1");
+    const x = await buildApp({ riot, cache: memoryCache(), dd: fakeDD, store: st, collector: idleCollector(riot, st), defaultPlatform: "euw1" });
+    const top = (await x.inject({ url: "/v1/champions?role=TOP" })).json(), jungle = (await x.inject({ url: "/v1/champions?role=JUNGLE" })).json();
+    expect(top.champions.find((c: { id: string }) => c.id === "Ahri")).toMatchObject({ games: 30 });   // role-specific numbers, not her 32 total
+    expect(jungle.champions.find((c: { id: string }) => c.id === "Ahri")).toBeUndefined();            // 2 of 32 games (6%) is under 10%
   });
   it("returns champion detail with finished items, named keystones and matchups", async () => {
     const d = (await get("/v1/champions/Ahri")).json();

@@ -32,24 +32,42 @@ export interface RiotApi {
   activeGame(puuid: string, platform: string): Promise<RiotActiveGame>;
 }
 
+const REQUEST_TIMEOUT_MS = 15_000, NET_RETRIES = 3, SERVER_RETRIES = 2, NET_BACKOFF_MS = 500;
+/** Node reports network failures as a bare "fetch failed"; the real reason (ENOTFOUND, ETIMEDOUT, ...) is on the cause. */
+export function networkCause(e: unknown): string {
+  const err = e as { name?: string; code?: string; message?: string; cause?: { code?: string; message?: string } };
+  if (err?.name === "TimeoutError" || err?.name === "AbortError") return "timed out";
+  return err?.cause?.code ?? err?.code ?? err?.cause?.message ?? err?.message ?? "unknown network error";
+}
+
 export class HttpRiot implements RiotApi {
   constructor(private key: string, private limiters: { for(host: string): RateLimiter }, private fetchFn: typeof fetch = fetch,
     private sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))) {}
-  /** All requests go through the limiter; a 429 waits for Retry-After and retries. The key is only ever sent as a header, never logged. */
+  /**
+   * All requests go through the limiter. A 429 waits for Retry-After and retries; a dropped connection, timeout or Riot 5xx is retried
+   * a few times with a growing pause (these are common when many requests run in parallel) before giving up with a message that names
+   * the cause. The key is only ever sent as a header, never logged.
+   */
   private async get<T>(host: string, path: string, low = false): Promise<T> {
-    for (let attempt = 0; ; attempt++) {
+    let rateTries = 0, netTries = 0, serverTries = 0;
+    for (;;) {
       const limiter = this.limiters.for(host);
       await limiter.acquire(low);
-      const res = await this.fetchFn(`https://${host}.api.riotgames.com${path}`, { headers: { "X-Riot-Token": this.key } })
-        .catch(() => { throw new HttpError(502, "Could not reach Riot's servers"); });
+      let res: Response;
+      try { res = await this.fetchFn(`https://${host}.api.riotgames.com${path}`, { headers: { "X-Riot-Token": this.key }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }); }
+      catch (e) {
+        if (netTries++ < NET_RETRIES) { await this.sleep(NET_BACKOFF_MS * 3 ** (netTries - 1)); continue; }
+        throw new HttpError(502, `Could not reach Riot's servers (${networkCause(e)})`);
+      }
       // Riot reports the key's real limits on every response: adopt them (with a 10% safety margin), so a production key runs faster than a personal one.
       const hdr = res.headers.get("x-app-rate-limit"), tuned = parseRateLimit(hdr);
       if (hdr && tuned && hdr !== limiter.lastHeader) { limiter.lastHeader = hdr; limiter.setWindows(tuned.map((w) => ({ limit: Math.max(1, Math.floor(w.limit * 0.9)), ms: w.ms }))); }
-      if (res.status === 429 && attempt < 2) { await this.sleep((Number(res.headers.get("retry-after") ?? 1) + 0.25) * 1000); continue; }
+      if (res.status === 429 && rateTries++ < 2) { await this.sleep((Number(res.headers.get("retry-after") ?? 1) + 0.25) * 1000); continue; }
       if (res.ok) return (await res.json()) as T;
       if (res.status === 404) throw new HttpError(404, "Not found on Riot's servers");
       if (res.status === 401 || res.status === 403) throw new HttpError(502, "Riot rejected the API key (expired or invalid). Check RIOT_API_KEY in services/api/.env");
       if (res.status === 429) throw new HttpError(429, "Riot rate limit reached. Try again in a moment");
+      if (res.status >= 500 && serverTries++ < SERVER_RETRIES) { await this.sleep(NET_BACKOFF_MS * 3 ** (serverTries - 1)); continue; }
       throw new HttpError(502, `Riot returned status ${res.status}`);
     }
   }

@@ -50,7 +50,7 @@ function CollectorRow() {
       <div className="text-right space-y-2 max-w-md">
         <div className="text-sm" aria-live="polite">{data ? `${data.running ? "Collecting" : "Paused"} · ${data.matches.toLocaleString()} games · ${data.crawled.toLocaleString()} players crawled · ladders ${data.ladders.seeded}/${data.ladders.total}` : "Backend not reachable"}</div>
         {data && withData.length > 0 && <div className="text-xs text-muted">{withData.map((p) => `${platformName(p.id)} ${p.matches.toLocaleString()}`).join(" · ")}</div>}
-        {data?.lastError && <div className="text-xs text-bad">{data.lastError}</div>}
+        {data?.lastError && <div className={`text-xs ${data.fatal ? "text-bad" : "text-muted"}`}>{data.fatal ? data.lastError : `Recent hiccup, retrying automatically: ${data.lastError}`}</div>}
         <Button variant="ghost" disabled={!data} onClick={() => void act(data?.running ? "stop" : "start")}>{data?.running ? "Pause collector" : "Resume collector"}</Button>
       </div>
     </Row>

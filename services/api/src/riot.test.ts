@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RateLimiter, HostLimiters } from "./rateLimiter";
-import { HttpError, HttpRiot, regionOf } from "./riot";
+import { HttpError, HttpRiot, networkCause, regionOf } from "./riot";
 
 const limiter = () => { const l = new RateLimiter([{ limit: 1000, ms: 1000 }]); return { for: () => l }; };
 const res = (status: number, body: unknown = {}, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers });
@@ -25,6 +25,23 @@ describe("HttpRiot", () => {
     await expect(mk(404).account("a", "b", "europe")).rejects.toMatchObject({ status: 404 });
     await expect(mk(403).account("a", "b", "europe")).rejects.toThrow(/API key/);
     await expect(mk(500).account("a", "b", "europe")).rejects.toBeInstanceOf(HttpError);
+  });
+  it("retries a dropped connection and succeeds, instead of failing on a blip", async () => {
+    let n = 0; const slept: number[] = [];
+    const r = new HttpRiot("k", limiter(), (async () => { if (++n < 3) throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); return res(200, ["EUW1_1"]); }) as never, async (ms) => { slept.push(ms); });
+    expect(await r.matchIds("p", "europe", 0, 1)).toEqual(["EUW1_1"]);
+    expect(n).toBe(3); expect(slept).toEqual([500, 1500]);       // growing pause between attempts
+  });
+  it("names the real cause when Riot stays unreachable, and times out slow requests", async () => {
+    const down = new HttpRiot("k", limiter(), (async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }); }) as never, async () => {});
+    await expect(down.account("a", "b", "europe")).rejects.toMatchObject({ status: 502, message: expect.stringContaining("ENOTFOUND") });
+    expect(networkCause(Object.assign(new Error("x"), { name: "TimeoutError" }))).toBe("timed out");
+  });
+  it("retries Riot 5xx a couple of times, then reports the status", async () => {
+    let n = 0; const r = new HttpRiot("k", limiter(), (async () => (++n < 3 ? res(503) : res(200, { summonerLevel: 9 }))) as never, async () => {});
+    expect(await r.summoner("p", "euw1")).toEqual({ summonerLevel: 9 });
+    let m = 0; const bad = new HttpRiot("k", limiter(), (async () => { m++; return res(500); }) as never, async () => {});
+    await expect(bad.summoner("p", "euw1")).rejects.toThrow(/status 500/); expect(m).toBe(3);
   });
   it("treats a missing ranked entry list as unranked", async () => {
     expect(await new HttpRiot("k", limiter(), (async () => res(404)) as never).league("p", "euw1")).toEqual([]);

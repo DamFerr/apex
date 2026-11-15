@@ -11,8 +11,8 @@ if (!config.riotKey) {
   console.error("RIOT_API_KEY is missing. Copy services/api/.env.example to services/api/.env and put your key in it.");
   process.exit(1);
 }
-// Riot limits each region separately, so each host gets its own limiter. The collector only gets half of each window.
-const limiters = new HostLimiters([{ limit: config.ratePerSecond, ms: 1000 }, { limit: config.ratePer2Min, ms: 120_000 }]);
+// Riot limits each region separately, so each host gets its own limiter. The collector gets COLLECT_SHARE of each window (80% by default).
+const limiters = new HostLimiters([{ limit: config.ratePerSecond, ms: 1000 }, { limit: config.ratePer2Min, ms: 120_000 }], undefined, undefined, config.collectShare);
 const riot = new HttpRiot(config.riotKey, limiters), db = openDatabase(config.dbPath), store = makeStore(db), cache = makeCache(db);
 store.backfillPlatform(config.platform);
 const collector = new Collector(riot, store, { platforms: config.collectPlatforms ?? ALL_PLATFORMS, tiers: config.collectTiers ?? TIERS, pages: config.collectPages, matchesPerPlayer: 20, recrawlMs: 6 * 3600_000, concurrency: config.collectConcurrency });

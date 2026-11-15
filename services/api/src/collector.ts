@@ -15,7 +15,9 @@ export interface Ladder { platform: string; tier: string; division: string }
  * parallel (Riot limits each region separately), all at low priority so interactive requests always have room.
  */
 export class Collector {
-  status = { running: false, lastError: null as string | null, savedThisRun: 0 };
+  status = { running: false, lastError: null as string | null, lastErrorAt: 0, fatal: false, errorsThisRun: 0, savedThisRun: 0 };
+  /** Workers currently busy per regional cluster (europe, americas, asia, sea). */
+  private busy = new Map<string, number>();
   private stopping = false; private loops: Promise<void>[] = []; private tick = 0;
   private inFlight = new Set<string>(); private failedUntil = new Map<string, number>();
   constructor(private riot: RiotApi, private store: Store, public cfg: CollectorConfig, private now = () => Date.now(),
@@ -29,7 +31,7 @@ export class Collector {
 
   start() {
     if (this.loops.length) return;
-    this.stopping = false; this.status = { running: true, lastError: null, savedThisRun: 0 };
+    this.stopping = false; this.status = { running: true, lastError: null, lastErrorAt: 0, fatal: false, errorsThisRun: 0, savedThisRun: 0 };
     const loops = Array.from({ length: Math.max(1, this.cfg.concurrency) }, () => this.run());
     this.loops = loops;
     void Promise.all(loops).finally(() => { if (this.loops === loops) { this.loops = []; this.status.running = false; } });
@@ -59,17 +61,27 @@ export class Collector {
     return true;
   }
 
-  /** Crawls the least recently crawled player. Returns false when everyone was crawled recently. */
+  /**
+   * Crawls the least recently crawled player. Returns false when everyone was crawled recently.
+   * Riot's limits apply per regional cluster (Match-v5 goes to europe / americas / asia / sea), so each worker picks its player from
+   * the cluster that currently has the fewest busy workers. That keeps every cluster's limit in use instead of piling all workers onto one.
+   */
   private async crawlOne(): Promise<boolean> {
-    const seed = this.store.claimSeed(this.now() - this.cfg.recrawlMs, this.now());
-    if (!seed) return false;
-    const region = regionOf(seed.platform);
-    for (const id of await this.riot.matchIds(seed.puuid, region, 0, this.cfg.matchesPerPlayer, 420, true)) {
-      if (this.stopping) break;
-      if (this.store.hasMatch(id)) continue;
-      if (this.store.saveMatch(await this.riot.match(id, region, true), seed.tier, seed.platform)) this.status.savedThisRun++;
+    const clusters = [...new Set(this.cfg.platforms.map(regionOf))].sort((a, b) => (this.busy.get(a) ?? 0) - (this.busy.get(b) ?? 0));
+    for (const region of clusters) {
+      const seed = this.store.claimSeed(this.now() - this.cfg.recrawlMs, this.now(), this.cfg.platforms.filter((p) => regionOf(p) === region));
+      if (!seed) continue;
+      this.busy.set(region, (this.busy.get(region) ?? 0) + 1);
+      try {
+        for (const id of await this.riot.matchIds(seed.puuid, region, 0, this.cfg.matchesPerPlayer, 420, true)) {
+          if (this.stopping) break;
+          if (this.store.hasMatch(id)) continue;
+          if (this.store.saveMatch(await this.riot.match(id, region, true), seed.tier, seed.platform)) this.status.savedThisRun++;
+        }
+      } finally { this.busy.set(region, (this.busy.get(region) ?? 1) - 1); }
+      return true;
     }
-    return true;
+    return false;
   }
 
   /** One unit of work: mostly crawling, with every third step reading a ladder first so new regions fill in early. */
@@ -85,8 +97,8 @@ export class Collector {
     while (!this.stopping) {
       try { if ((await this.step()) === "idle") await this.nap(30_000); }
       catch (e) {
-        this.status.lastError = e instanceof Error ? e.message : String(e);
-        if (e instanceof HttpError && /API key/.test(e.message)) return; // no point retrying with a bad key
+        this.status.lastError = e instanceof Error ? e.message : String(e); this.status.lastErrorAt = this.now(); this.status.errorsThisRun++;
+        if (e instanceof HttpError && /API key/.test(e.message)) { this.status.fatal = true; return; } // no point retrying with a bad key
         await this.nap(10_000);
       }
     }
