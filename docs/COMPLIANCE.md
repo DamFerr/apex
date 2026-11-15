@@ -1,0 +1,14 @@
+# Riot compliance checklist (plan section 12)
+
+This is an engineering checklist, not legal advice. Review current Riot Developer Policies and ToS before shipping.
+
+| # | Rule | Status |
+|---|---|---|
+| 1 | Register product, production API key, legal disclaimer | Disclaimer shown in Settings and README. Key application: TODO (Phase 0). No key in the client. |
+| 2 | No hidden information | Only data the League client already shows the player (champ select via LCU). No enemy cooldown or fog-of-war tracking. Overlay is a placeholder. |
+| 3 | No gameplay automation or input injection | None. Auto-import is OFF by default and only logs for now. Auto-accept and auto-pick are not built. Re-check each against current policy before enabling. |
+| 4 | No harassment or doxxing | Notes (later) stay local. No smurf score yet; it must be labelled an estimate. |
+| 5 | Monetization rules | Decision pending (Phase 0). |
+| 6 | Data Dragon asset rules | Icons and splash art load from Riot's CDN at runtime, are not bundled or redistributed, and fall back to initials offline. |
+
+Other: the app reads champ select data from the local League client. It writes only your summoner spells in champ select (PATCH my-selection) and rune pages named "Apex: <champion>" (explicit button, or opt-in auto-import which is off by default). The Rust command refuses any other endpoint and any method except GET/POST/PUT; it never touches your own pages. The overlay never intercepts game input (click-through).

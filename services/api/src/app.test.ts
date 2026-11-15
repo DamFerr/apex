@@ -1,0 +1,161 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { buildApp } from "./app";
+import { HttpError } from "./riot";
+import { diverseStore, fakeDD, fakeRiot, idleCollector, memoryCache, seededStore } from "./testkit";
+
+let store: ReturnType<typeof seededStore>, riot: ReturnType<typeof fakeRiot>, app: Awaited<ReturnType<typeof buildApp>>;
+beforeEach(async () => {
+  riot = fakeRiot(); store = seededStore();
+  const orig = riot.account; riot.account = async (n, t, r) => { try { return await orig(n, t, r); } catch { throw new HttpError(404, "Not found on Riot's servers"); } };
+  app = await buildApp({ riot, cache: memoryCache(), dd: fakeDD, store, collector: idleCollector(riot, store), defaultPlatform: "euw1" });
+});
+const get = (url: string) => app.inject({ method: "GET", url });
+
+describe("API", () => {
+  it("health never reveals the key", async () => { const r = await get("/health"); expect(r.json()).toEqual({ ok: true, hasKey: true }); });
+  it("returns a summoner with the solo rank", async () => {
+    const r = await get("/v1/players/Test%20Player%23EUW"); expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ riotId: "Test Player#EUW", level: 321, platform: "euw1", rank: { tier: "EMERALD", division: "II", lp: 64, wins: 87, losses: 79 } });
+  });
+  it("caches players so repeat requests do not spend Riot calls", async () => {
+    await get("/v1/players/Test%23EUW"); await get("/v1/players/Test%23EUW");
+    expect(riot.calls).toMatchObject({ account: 1, summoner: 1, league: 1 });
+  });
+  it("rejects malformed Riot IDs with a clear error", async () => {
+    const r = await get("/v1/players/nohashtag"); expect(r.statusCode).toBe(400); expect(r.json().error).toMatch(/Name#TAG/);
+  });
+  it("reports unknown players as 404 with a message", async () => {
+    const r = await get("/v1/players/Nobody%23EUW"); expect(r.statusCode).toBe(404); expect(r.json().error).toBeTruthy();
+  });
+  it("pages through match history with a cursor and caches matches forever", async () => {
+    const p1 = (await get("/v1/players/Test%23EUW/matches?limit=10")).json();
+    expect(p1.items).toHaveLength(10); expect(p1.nextCursor).toBe(10);
+    const p3 = (await get("/v1/players/Test%23EUW/matches?cursor=20&limit=10")).json();
+    expect(p3.items).toHaveLength(5); expect(p3.nextCursor).toBeNull(); // only 25 exist
+    const before = riot.calls.match; await get("/v1/players/Test%23EUW/matches?limit=10");
+    expect(riot.calls.match).toBe(before); // the first page was already cached
+  });
+  it("returns match detail and marks which player is you", async () => {
+    const d = (await get("/v1/matches/EUW1_3?riotId=Test%23EUW")).json();
+    expect(d.participants).toHaveLength(10); expect(d.participants.filter((p: { isYou: boolean }) => p.isYou)).toHaveLength(1);
+  });
+  it("returns mastery with champion names", async () => {
+    expect((await get("/v1/players/Test%23EUW/mastery")).json()).toEqual([{ champion: "Ahri", name: "Ahri", level: 10, points: 250000 }]);
+  });
+});
+
+describe("champion statistics API", () => {
+  it("lists champions with games, wins, bans and roles from collected games", async () => {
+    const r = (await get("/v1/champions")).json();
+    expect(r.patch).toBe("16.22"); expect(r.totalGames).toBe(40);
+    const ahri = r.champions.find((c: { id: string }) => c.id === "Ahri");
+    expect(ahri).toMatchObject({ name: "Ahri", tags: ["Mage"], games: 40, wins: 26, bans: 40 });
+    expect(ahri.roles).toContain("TOP");
+  });
+  it("filters by role", async () => {
+    const r = (await get("/v1/champions?role=JUNGLE")).json();
+    expect(r.champions.length).toBeGreaterThan(0);
+    expect(r.champions.every((c: { roles: string[] }) => c.roles.includes("JUNGLE"))).toBe(true);
+  });
+  it("returns champion detail with finished items, named keystones and matchups", async () => {
+    const d = (await get("/v1/champions/Ahri")).json();
+    expect(d.builds.map((b: { name: string }) => b.name)).toContain("Zhonya's Hourglass");
+    expect(d.builds.map((b: { name: string }) => b.name)).not.toContain("Doran's Blade"); // starter items are filtered out
+    expect(d.runes.map((x: { name: string }) => x.name)).toContain("Press the Attack");
+    expect(d.matchups.length).toBeGreaterThan(0);
+  });
+  it("404s for a champion without collected games", async () => { expect((await get("/v1/champions/Teemo")).statusCode).toBe(404); });
+  it("reports collector status and only accepts start/stop with the X-Apex header", async () => {
+    expect((await get("/v1/collector")).json()).toMatchObject({ running: false, matches: 40, ladders: { seeded: 0, total: 4 }, workers: 1, latestPatch: "16.22" });
+    expect((await app.inject({ method: "POST", url: "/v1/collector/start" })).statusCode).toBe(403);
+    const ok = await app.inject({ method: "POST", url: "/v1/collector/start", headers: { "x-apex": "1" } });
+    expect(ok.statusCode).toBe(200); expect(ok.json().running).toBe(true);
+    expect((await app.inject({ method: "POST", url: "/v1/collector/stop", headers: { "x-apex": "1" } })).json().running).toBe(false);
+  });
+});
+
+describe("when Data Dragon is unavailable", () => {
+  it("answers with a clear 502 instead of a generic server error", async () => {
+    const down = await buildApp({ riot, cache: memoryCache(), dd: async () => { throw new Error("offline"); }, store, collector: idleCollector(riot, store), defaultPlatform: "euw1" });
+    const r = await down.inject({ method: "GET", url: "/v1/champions" });
+    expect(r.statusCode).toBe(502); expect(r.json().error).toMatch(/Data Dragon/);
+  });
+});
+
+describe("filters API", () => {
+  let diverse: ReturnType<typeof diverseStore>, fapp: Awaited<ReturnType<typeof buildApp>>;
+  beforeEach(async () => { diverse = diverseStore(); fapp = await buildApp({ riot, cache: memoryCache(), dd: fakeDD, store: diverse, collector: idleCollector(riot, diverse), defaultPlatform: "euw1" }); });
+  const fget = (url: string) => fapp.inject({ method: "GET", url });
+  it("lists the regions, ranks and patches that have data", async () => {
+    const f = (await fget("/v1/filters")).json();
+    const count = (list: { id: string; matches: number }[], id: string) => list.find((x) => x.id === id)?.matches;
+    expect(f.platforms).toHaveLength(17);                                           // every region is always offered
+    expect([count(f.platforms, "euw1"), count(f.platforms, "na1"), count(f.platforms, "kr")]).toEqual([40, 20, 0]);
+    expect(f.patches.map((p: { id: string }) => p.id)).toEqual(["16.22", "16.21"]);
+    // ranks are cumulative: Emerald = Emerald and above
+    expect([count(f.ranks, "IRON"), count(f.ranks, "EMERALD"), count(f.ranks, "DIAMOND"), count(f.ranks, "MASTER")]).toEqual([60, 60, 20, 0]);
+  });
+  it("defaults to the latest patch and all regions and ranks", async () => { expect((await fget("/v1/champions")).json()).toMatchObject({ patch: "16.22", totalGames: 40 }); });
+  it("combines patch, region and rank filters", async () => {
+    expect((await fget("/v1/champions?patch=all")).json().totalGames).toBe(60);
+    expect((await fget("/v1/champions?patch=all&region=na1")).json().totalGames).toBe(20);
+    expect((await fget("/v1/champions?patch=all&rank=DIAMOND")).json().totalGames).toBe(20);     // Diamond and above
+    expect((await fget("/v1/champions?patch=all&rank=EMERALD")).json().totalGames).toBe(60);     // Emerald means Emerald and above, so Diamond games count too
+    expect((await fget("/v1/champions?patch=all&rank=EMERALD%2B")).json().totalGames).toBe(60);  // "+" is accepted but means the same
+    expect((await fget("/v1/champions?patch=all&rank=MASTER")).json().totalGames).toBe(0);
+    expect((await fget("/v1/champions?patch=16.21&region=euw1")).json().totalGames).toBe(0);
+  });
+  it("applies the same filters to champion detail, and says so when nothing matches", async () => {
+    expect((await fget("/v1/champions/Ahri?patch=all&region=na1")).json().games).toBe(20);
+    const none = await fget("/v1/champions/Ahri?region=na1");        // na1 games are on an older patch
+    expect(none.statusCode).toBe(404); expect(none.json().error).toMatch(/these filters/);
+  });
+  it("rejects an unknown rank", async () => { expect((await fget("/v1/champions?rank=PLASTIC")).statusCode).toBe(400); });
+});
+
+
+describe("searching players in any region", () => {
+  const home = async (europe: string[], americas: string[]) => {
+    const r = fakeRiot(); const asked: string[] = [], used: string[] = [];
+    r.matchIds = async (_p, region) => { asked.push(region); return region === "europe" ? europe : region === "americas" ? americas : []; };
+    const sm = r.summoner; r.summoner = async (p, pf) => { used.push(pf); return sm(p, pf); };
+    const x = await buildApp({ riot: r, cache: memoryCache(), dd: fakeDD, store, collector: idleCollector(r, store), defaultPlatform: "euw1" });
+    return { x, asked, used };
+  };
+  it("finds a player on another region from one recent match, without being told the region", async () => {
+    const { x, asked, used } = await home([], ["NA1_5"]);
+    const r = await x.inject({ method: "GET", url: "/v1/players/Test%23NA1" });
+    expect(r.json().platform).toBe("na1"); expect(used).toEqual(["na1"]);
+    expect(asked).toEqual(["europe", "americas"]);                                  // the preferred region first, then the others
+  });
+  it("remembers where a player lives, so later requests do not search again", async () => {
+    const { x, asked } = await home([], ["NA1_5"]);
+    await x.inject({ method: "GET", url: "/v1/players/Test%23NA1" }); await x.inject({ method: "GET", url: "/v1/players/Test%23NA1/mastery" });
+    expect(asked).toEqual(["europe", "americas"]);
+  });
+  it("falls back to asking each platform when the player has no recent matches", async () => {
+    const r = fakeRiot(); r.matchIds = async () => [];
+    r.summoner = async (_p, pf) => { if (pf !== "kr") throw new HttpError(404, "no"); return { summonerLevel: 30 }; };
+    const x = await buildApp({ riot: r, cache: memoryCache(), dd: fakeDD, store, collector: idleCollector(r, store), defaultPlatform: "euw1" });
+    expect((await x.inject({ method: "GET", url: "/v1/players/Quiet%23KR1" })).json().platform).toBe("kr");
+  });
+  it("says so when the player exists nowhere", async () => {
+    const r = fakeRiot(); r.matchIds = async () => []; r.summoner = async () => { throw new HttpError(404, "no"); };
+    const x = await buildApp({ riot: r, cache: memoryCache(), dd: fakeDD, store, collector: idleCollector(r, store), defaultPlatform: "euw1" });
+    const res = await x.inject({ method: "GET", url: "/v1/players/Ghost%23000" });
+    expect(res.statusCode).toBe(404); expect(res.json().error).toMatch(/any region/);
+  });
+});
+
+describe("draft data and champion pool APIs", () => {
+  it("serves collected draft statistics that follow the filters", async () => {
+    const d = (await get("/v1/draft/data")).json();
+    expect(d.games).toBe(40); expect(d.patch).toBe("16.22");
+    expect(d.champions.find((c: { id: string }) => c.id === "Ahri")).toMatchObject({ games: 40, wins: 26 });
+    expect(d.matchups.length).toBeGreaterThan(0); expect(d.synergies.length).toBeGreaterThan(0);
+  });
+  it("builds your pool from recent games and mastery", async () => {
+    const pool = (await get("/v1/players/Test%23EUW/pool")).json();
+    expect(pool[0]).toEqual({ champion: "Ahri", games: 20, wins: 20, points: 250000 });   // the fake player is Ahri in all 20 recent games
+  });
+});

@@ -1,0 +1,14 @@
+{
+  "name": "apex",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "pnpm --filter desktop dev:web",
+    "build": "pnpm --filter desktop build:web",
+    "typecheck": "pnpm --filter desktop typecheck",
+    "api": "pnpm --filter @apex/api start",
+    "tauri": "pnpm --filter desktop exec tauri",
+    "test": "pnpm -r --if-present test",
+    "lcu-mock": "pnpm --filter @apex/lcu-mock start"
+  }
+}

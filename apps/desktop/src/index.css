@@ -1,0 +1,45 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/space-grotesk";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (RGB triplets). Dark is the default theme. */
+:root, [data-theme="dark"] {
+  --base: 11 14 23; --surface: 18 23 37; --raised: 27 33 52; --line: 255 255 255;
+  --text: 232 236 245; --muted: 139 148 173;
+  --accent: 124 92 255; --gold: 232 183 90; --good: 45 212 191; --bad: 255 107 129;
+}
+[data-theme="light"] {
+  --base: 243 245 250; --surface: 255 255 255; --raised: 236 239 247; --line: 15 23 42;
+  --text: 20 25 45; --muted: 100 110 135;
+  --accent: 98 66 240; --gold: 176 120 20; --good: 13 148 136; --bad: 214 51 84;
+}
+/* Colorblind-safe: blue/orange instead of green/red for good/bad. */
+[data-theme="colorblind"] {
+  --base: 11 14 23; --surface: 18 23 37; --raised: 27 33 52; --line: 255 255 255;
+  --text: 232 236 245; --muted: 139 148 173;
+  --accent: 86 180 233; --gold: 240 228 66; --good: 0 114 178; --bad: 230 159 0;
+}
+html, body, #root { height: 100%; }
+body {
+  @apply bg-base text-text font-sans antialiased overflow-hidden select-none;
+  background-image:
+    radial-gradient(900px 500px at 85% -10%, rgb(var(--accent) / .14), transparent 60%),
+    radial-gradient(700px 400px at -5% 110%, rgb(var(--gold) / .06), transparent 60%);
+  background-attachment: fixed;
+}
+@layer components {
+  .glass { @apply bg-surface/70 backdrop-blur-xl border border-line/10 shadow-panel; }
+  .focus-ring { @apply outline-none focus-visible:ring-2 focus-visible:ring-accent/70; }
+}
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--line) / .12); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+
+/* Overlay window: fully transparent page so only the panel is visible. */
+[data-overlay] body { background: transparent !important; background-image: none !important; }
+[data-overlay] html, html[data-overlay] { background: transparent; }
+
+/* Reduce motion: setting in Settings, or the OS preference. Framer Motion handles transforms; this covers CSS. */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
+[data-reduce-motion="true"] *, [data-reduce-motion="true"] *::before, [data-reduce-motion="true"] *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }

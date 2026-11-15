@@ -1,0 +1,17 @@
+try { process.loadEnvFile(".env"); } catch { /* .env is optional (tests, CI) */ }
+const num = (v: string | undefined, d: number) => (v && Number.isFinite(Number(v)) ? Number(v) : d);
+export const config = {
+  riotKey: (process.env.RIOT_API_KEY ?? "").trim(),
+  platform: (process.env.RIOT_PLATFORM ?? "euw1").trim().toLowerCase(),
+  port: num(process.env.PORT, 8787),
+  dbPath: process.env.DB_PATH ?? "apex.db",
+  ratePerSecond: num(process.env.RATE_PER_SECOND, 20),
+  ratePer2Min: num(process.env.RATE_PER_2MIN, 100),
+  // The collector starts with the backend and covers every region and rank. COLLECT_DISABLED=1 turns that off.
+  autoCollect: process.env.COLLECT_DISABLED !== "1",
+  collectConcurrency: num(process.env.COLLECT_CONCURRENCY, 4),
+  // Optional restriction (comma-separated). Leave unset to collect everything.
+  collectPlatforms: process.env.COLLECT_ONLY_PLATFORMS ? process.env.COLLECT_ONLY_PLATFORMS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : null,
+  collectTiers: process.env.COLLECT_ONLY_TIERS ? process.env.COLLECT_ONLY_TIERS.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) : null,
+  collectPages: num(process.env.COLLECT_PAGES, 1),
+};

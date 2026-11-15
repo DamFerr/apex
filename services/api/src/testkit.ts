@@ -1,0 +1,51 @@
+import { DatabaseSync } from "./sqlite";
+import { makeCache, type Cache } from "./db";
+import type { DD } from "./ddragon";
+import { makeStore, type Store } from "./store";
+import { Collector } from "./collector";
+import type { RiotApi, RiotMatch, RiotParticipant } from "./riot";
+
+export const memoryCache = (): Cache => makeCache(new DatabaseSync(":memory:"));
+export const participant = (i: number, over: Partial<RiotParticipant> = {}): RiotParticipant => ({ puuid: `p${i}`, riotIdGameName: `Player${i}`, championName: ["Ahri", "Jinx", "Thresh", "Garen", "LeeSin", "Lux", "Zed", "Ashe", "Ornn", "Yasuo"][i], teamId: i < 5 ? 100 : 200,
+  teamPosition: ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"][i % 5], win: i < 5, kills: i, deaths: 2, assists: 3, totalMinionsKilled: 100 + i, neutralMinionsKilled: 10, totalDamageDealtToChampions: 10000 + i, goldEarned: 9000, visionScore: 20,
+  item0: 3157, item1: 3020, item2: i % 2 ? 3089 : 3157, item3: 1055, item4: 0, item5: 0, item6: 3340, summoner1Id: 4, summoner2Id: 14,
+  perks: { styles: [{ selections: [{ perk: i % 2 ? 8112 : 8005 }] }] }, ...over });
+export const matchFixture = (id: string, over: Partial<RiotMatch["info"]> = {}, blueWin = true): RiotMatch => ({ metadata: { matchId: id },
+  info: { gameDuration: 1800, gameCreation: 1_700_000_000_000, gameEndTimestamp: 1_700_001_800_000, queueId: 420, gameVersion: "16.22.100.1",
+    participants: Array.from({ length: 10 }, (_, i) => participant(i, { win: (i < 5) === blueWin })),
+    teams: [{ teamId: 100, bans: [{ championId: 103 }, { championId: 0 }] }, { teamId: 200, bans: [{ championId: 222 }] }], ...over } });
+export const fakeDD = async (): Promise<DD> => ({
+  champs: new Map([[103, { id: "Ahri", name: "Ahri", tags: ["Mage"] }], [222, { id: "Jinx", name: "Jinx", tags: ["Marksman"] }], [412, { id: "Thresh", name: "Thresh", tags: ["Support"] }],
+    [86, { id: "Garen", name: "Garen", tags: ["Fighter"] }], [64, { id: "LeeSin", name: "Lee Sin", tags: ["Fighter"] }],
+    [99, { id: "Lux", name: "Lux", tags: ["Mage"] }], [238, { id: "Zed", name: "Zed", tags: ["Assassin"] }], [22, { id: "Ashe", name: "Ashe", tags: ["Marksman"] }], [516, { id: "Ornn", name: "Ornn", tags: ["Tank"] }], [157, { id: "Yasuo", name: "Yasuo", tags: ["Fighter"] }]]),
+  items: new Map([[3157, { name: "Zhonya's Hourglass", total: 3250, hasUpgrade: false }], [3020, { name: "Sorcerer's Shoes", total: 1100, hasUpgrade: false }], [3089, { name: "Rabadon's Deathcap", total: 3600, hasUpgrade: false }],
+    [1055, { name: "Doran's Blade", total: 450, hasUpgrade: true }], [3340, { name: "Stealth Ward", total: 0, hasUpgrade: false }]]),
+  runes: new Map([[8112, "Electrocute"], [8005, "Press the Attack"]]),
+});
+/** A store with 40 varied ranked games, so stats endpoints have something to aggregate. */
+export function seededStore(db = new DatabaseSync(":memory:")): Store {
+  const store = makeStore(db);
+  for (let n = 0; n < 40; n++) store.saveMatch(matchFixture(`EUW1_${n}`, {}, n % 3 !== 0), "EMERALD", "euw1"); // blue side wins 2 of 3
+  return store;
+}
+/** seededStore plus 20 older-patch Diamond games on North America, so region, patch and rank filters have something to separate. */
+export function diverseStore(): Store {
+  const store = seededStore();
+  for (let n = 0; n < 20; n++) store.saveMatch(matchFixture(`NA1_${n}`, { gameVersion: "16.21.9.9", gameEndTimestamp: 1_600_000_000_000 + n }, n % 2 === 0), "DIAMOND", "na1");
+  return store;
+}
+export const idleCollector = (riot: RiotApi, store: Store) => new Collector(riot, store, { platforms: ["euw1"], tiers: ["EMERALD"], pages: 1, matchesPerPlayer: 5, recrawlMs: 1000, concurrency: 1 });
+
+/** Fake Riot that counts calls, so tests can prove caching works. */
+export function fakeRiot(): RiotApi & { calls: Record<string, number> } {
+  const calls: Record<string, number> = {}, hit = (k: string) => { calls[k] = (calls[k] ?? 0) + 1; };
+  return { calls,
+    account: async (name, tag) => { hit("account"); if (name === "Nobody") throw Object.assign(new Error("x"), { status: 404 }) as never; return { puuid: "p0", gameName: name, tagLine: tag }; },
+    summoner: async () => { hit("summoner"); return { summonerLevel: 321 }; },
+    league: async () => { hit("league"); return [{ queueType: "RANKED_FLEX_SR", tier: "GOLD", rank: "I", leaguePoints: 1, wins: 1, losses: 1 }, { queueType: "RANKED_SOLO_5x5", tier: "EMERALD", rank: "II", leaguePoints: 64, wins: 87, losses: 79 }]; },
+    ladder: async () => { hit("ladder"); return [{ puuid: "p0", tier: "EMERALD", rank: "II", leaguePoints: 10 }, { puuid: "p1", tier: "EMERALD", rank: "II", leaguePoints: 20 }, { tier: "EMERALD", rank: "II", leaguePoints: 30 }]; },
+    matchIds: async (_p, _r, start, count) => { hit("matchIds"); return Array.from({ length: Math.min(count, 25 - start) }, (_, i) => `EUW1_${start + i}`); },
+    match: async (id) => { hit("match"); return matchFixture(id); },
+    mastery: async () => { hit("mastery"); return [{ championId: 103, championLevel: 10, championPoints: 250000 }, { championId: 999999, championLevel: 5, championPoints: 1 }]; },
+  };
+}
