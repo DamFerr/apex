@@ -12,6 +12,7 @@ import { useDraft } from "../lib/lcu";
 import { useDdChampions, useDdVersion } from "../lib/ddragon";
 import { applyCompact } from "../lib/compact";
 import { Toaster } from "../components/Toaster";
+import { LegalModal, LegalDocType, RIOT_DISCLAIMER } from "../components/LegalModal";
 
 function TitleBar() {
   const setPalette = useUi((s) => s.setPalette);
@@ -124,6 +125,7 @@ function CommandPalette() {
 }
 
 export function Shell() {
+  const [legalDoc, setLegalDoc] = useState<LegalDocType>(null);
   const compact = useUi((s) => s.compact), nav = useNavigate(), active = useDraft((s) => s.draft.active), auto = useUi((s) => s.autoCompact);
   const autoOn = useRef(false); // true only if auto mode (not the user) entered compact
   useEffect(() => { if (compact) nav("/draft"); }, [compact, nav]);
@@ -153,20 +155,45 @@ export function Shell() {
     <div className="h-full flex flex-col">
       <button className="sr-only focus:not-sr-only focus:absolute focus:z-[70] focus:top-2 focus:left-2 glass rounded-md px-3 py-2 text-sm" onClick={() => mainRef.current?.focus()}>Skip to content</button>
       <TitleBar />
-      <div className="flex-1 flex min-h-0">
-        {!compact && <Sidebar />}
-        <main id="main" ref={mainRef} tabIndex={-1} className={`flex-1 min-w-0 outline-none overflow-y-auto ${compact ? "p-4" : "p-8"}`}>
-          {/* Enter-only transition. An exit animation (AnimatePresence mode="wait") could get stuck at opacity 0
-              when combined with lazy routes and rapid clicks, leaving a blank page. */}
-          <motion.div key={loc.pathname} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, ease: "easeOut" }}>
-            <Suspense fallback={<div className="space-y-3"><Skeleton className="h-10 w-1/3" /><Skeleton className="h-40" /><Skeleton className="h-40" /></div>}><Outlet /></Suspense>
-          </motion.div>
-        </main>
-      </div>
-      {!compact && <StatusArea />}
-      <div className="sr-only" role="status" aria-live="polite">{label}</div>
-      <CommandPalette />
-      <Toaster />
+<div className="flex-1 flex min-h-0">
+      {!compact && <Sidebar />}
+      <main id="main" ref={mainRef} tabIndex={-1} className={`flex-1 min-w-0 outline-none overflow-y-auto flex flex-col ${compact ? "p-4" : "p-8"}`}>
+        {/* Enter-only transition. An exit animation (AnimatePresence mode="wait") could get stuck at opacity 0
+            when combined with lazy routes and rapid clicks, leaving a blank page. */}
+        <motion.div key={loc.pathname} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, ease: "easeOut" }} className="flex-1">
+          <Suspense fallback={<div className="space-y-3"><Skeleton className="h-10 w-1/3" /><Skeleton className="h-40" /><Skeleton className="h-40" /></div>}><Outlet /></Suspense>
+        </motion.div>
+
+        <footer className="mt-12 border-t border-line/10 pt-4 text-xs text-muted">
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+            <p className="max-w-3xl text-[11px] leading-snug">
+              {RIOT_DISCLAIMER}
+            </p>
+            <div className="flex shrink-0 items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setLegalDoc("terms")}
+                className="underline underline-offset-2 hover:text-text"
+              >
+                Terms of Service
+              </button>
+              <button
+                type="button"
+                onClick={() => setLegalDoc("privacy")}
+                className="underline underline-offset-2 hover:text-text"
+              >
+                Privacy Policy
+              </button>
+            </div>
+          </div>
+        </footer>
+      </main>
     </div>
-  );
+    {!compact && <StatusArea />}
+    <div className="sr-only" role="status" aria-live="polite">{label}</div>
+    <CommandPalette />
+    <Toaster />
+    <LegalModal doc={legalDoc} onClose={() => setLegalDoc(null)} />
+  </div>
+);
 }
